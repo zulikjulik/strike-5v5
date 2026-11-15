@@ -1,183 +1,266 @@
-// Общий код для сервера и клиента (3D-версия): карты, физика, лучи, оружие, скины.
-// Единицы — «пиксели» сервера: 1 клетка = 48 = 2 метра, 24 = 1 метр. Ось z — высота.
+// Общий код сервера и клиента: карты (с этажами), физика, лучи, оружие, скины, раскраски и кейсы.
+// Единицы — «пиксели» сервера: 1 клетка = 48 = 2 м, 24 = 1 м. Ось z — высота.
 (function (root) {
   const C = {
     TILE: 48, TICK: 30, DT: 1 / 30,
-    SPEED: 125, R: 9, PH: 43, EYE: 38, JUMP_V: 245, G: 820,
-    WALL_H: 72,
-    HP: 100, RESPAWN_MS: 3000, SCORE_LIMIT: 50, MATCH_MS: 5 * 60 * 1000, INTERMISSION_MS: 8000, TEAM_SIZE: 5,
-    START_MONEY: 3000, WIN_BONUS: 1500, LOSE_BONUS: 600,
-    HEAD_MULT: 4,
+    SPEED: 125, R: 9, PH: 43, EYE: 38, JUMP_V: 250, G: 820,
+    FLOOR: 72, STEP: 8, RAMP_STEP: 16,
+    HP: 100, RESPAWN_MS: 3000, SCORE_LIMIT: 50, MATCH_MS: 5 * 60 * 1000, INTERMISSION_MS: 9000, TEAM_SIZE: 5,
+    START_MONEY: 3000, WIN_BONUS: 1500, LOSE_BONUS: 600, HEAD_MULT: 4,
+    BED: 26, // высота кузова грузовика
   };
-  // Типы клеток
-  const T = { OUT: 0, WALL: 1, IN: 2, DOOR: 3, WIN: 4, CRATE: 5, TALL: 6 };
-  // Твёрдые диапазоны высот по типам [низ, верх]
-  const SOLID = {
-    0: [], 1: [[0, 72]], 2: [[72, 90]], 3: [[53, 90]], 4: [[0, 22], [50, 90]], 5: [[0, 26]], 6: [[0, 52]],
-  };
-  const CRATE_TOP = 26;
-  const CH = { '#': T.WALL, '.': T.OUT, 'A': T.OUT, ',': T.IN, 'D': T.DOOR, 'w': T.WIN, 'c': T.CRATE, 'C': T.TALL };
 
-  // Левая половина (20 символов), правая — зеркало, A -> B.
-  // # стена, . улица, , пол в доме (с крышей), D дверь, w окно, c ящик (можно запрыгнуть), C высокий ящик
+  // ---------------------------------------------------------------------
+  // Карта: у каждой клетки — колонка твёрдых диапазонов высот [z0, z1, материал],
+  // необязательный пандус-лестница и тип пола. Так получаются этажи, окна, двери.
+  // ---------------------------------------------------------------------
+  const W = 44, H = 26, HALF = 22;
+  function col() { return { s: [], ramp: null, kind: 'out', spawn: null }; }
+  function newGrid() { const g = []; for (let i = 0; i < W * H; i++) g.push(col()); return g; }
+  function carve(s, a, b) {
+    const out = [];
+    for (const r of s) {
+      if (r[1] <= a || r[0] >= b) { out.push(r); continue; }
+      if (r[0] < a) out.push([r[0], a, r[2]]);
+      if (r[1] > b) out.push([b, r[1], r[2]]);
+    }
+    return out;
+  }
+
+  // Построитель карты: операции задаются для левой половины, правая — зеркало.
+  function Builder(theme) {
+    const g = newGrid();
+    const at = (x, y) => g[y * W + x];
+    const ok = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
+    const set = (x, y, s, kind, extra) => { if (!ok(x, y)) return; const c = at(x, y); c.s = s; c.kind = kind || 'out'; c.ramp = null; c.spawn = null; Object.assign(c, extra || {}); };
+    const trims = [], trucks = [], chimneys = [];
+    const B = {
+      g, at, trims, trucks, chimneys,
+      wall(x0, y0, x1, y1, h = 72, mat = 'wall') { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(x, y, [[0, h, mat]], 'wall'); },
+      crate(x, y, tall) { set(x, y, [[0, tall ? 52 : 26, 'crate']], 'crate'); },
+      barrel(x, y) { set(x, y, [[0, 30, 'barrel']], 'barrel'); },
+      sand(x, y) { set(x, y, [[0, 30, 'sand']], 'sand'); },
+      fence(x0, y0, x1, y1) { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(x, y, [[0, 26, 'fence']], 'fence'); },
+      tree(x, y) { set(x, y, [[0, 260, 'trunk']], 'tree'); },
+      // одноэтажный дом: стены, окна, двери, крыша
+      house(x0, y0, x1, y1, o = {}) {
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+          const edge = x === x0 || x === x1 || y === y0 || y === y1;
+          if (edge) set(x, y, [[0, 72, 'wall']], 'wall'); else set(x, y, [[64, 68, 'slab'], [68, 72, 'roof']], 'in');
+        }
+        for (const [x, y] of o.doors || []) { at(x, y).s = carve(at(x, y).s, 0, 53); at(x, y).kind = 'door'; trims.push([x, y, 53]); }
+        for (const [x, y] of o.wins || []) { at(x, y).s = carve(at(x, y).s, 22, 50); trims.push([x, y, 22]); }
+        if (o.chimney) chimneys.push([o.chimney[0], o.chimney[1], 72]);
+      },
+      // двухэтажный дом 7×5 с лестницей
+      house2(x0, y0, o = {}) {
+        const x1 = x0 + 6, y1 = y0 + 4;
+        const ry = o.rampRow === 'bottom' ? y1 - 1 : y0 + 1;
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+          const edge = x === x0 || x === x1 || y === y0 || y === y1;
+          if (edge) {
+            let s = [[0, 144, 'wall2']];
+            const corner = (x === x0 || x === x1) && (y === y0 || y === y1);
+            if (!corner && (x + y) % 2 === 1) { s = carve(s, 94, 122); trims.push([x, y, 94]); }
+            set(x, y, s, 'wall');
+          } else set(x, y, [[64, 72, 'slab'], [136, 140, 'slab'], [140, 144, 'roof']], 'in');
+        }
+        // лестница: x0+2..x0+4 по ряду ry, вверх к +x, площадка x0+5
+        for (let i = 0; i < 3; i++) { const c = at(x0 + 2 + i, ry); c.s = [[136, 140, 'slab'], [140, 144, 'roof']]; c.ramp = { dx: 1, dy: 0, z0: i * 24, z1: (i + 1) * 24 }; }
+        for (const [x, y] of o.doors || []) { at(x, y).s = carve(at(x, y).s, 0, 53); at(x, y).kind = 'door'; trims.push([x, y, 53]); }
+        for (const [x, y] of o.wins || []) { at(x, y).s = carve(at(x, y).s, 22, 50); trims.push([x, y, 22]); }
+      },
+      // грузовик-спавн: кабина (x..x+1, y), кузов (x..x+1, y+1..y+3)
+      truck(x, y) {
+        for (let i = 0; i < 2; i++) {
+          set(x + i, y, [[6, 62, 'cab']], 'cab');
+          for (let j = 1; j <= 3; j++) set(x + i, y + j, [[10, C.BED, 'bed']], 'bed', { spawn: 'A' });
+        }
+        trucks.push({ x, y, team: 'A' });
+      },
+    };
+    return B;
+  }
+
+  // Башня в центре карты: 3 этажа, две лестницы
+  function tower(B) {
+    const x0 = 18, x1 = 25, y0 = 9, y1 = 15, at = B.at;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const c = at(x, y); c.ramp = null; c.spawn = null;
+      const edge = x === x0 || x === x1 || y === y0 || y === y1;
+      if (edge) {
+        let s = [[0, 216, 'tower']];
+        const corner = (x === x0 || x === x1) && (y === y0 || y === y1);
+        if (!corner && (x + y) % 2 === 0) { s = carve(s, 94, 122); s = carve(s, 166, 194); B.trims.push([x, y, 94], [x, y, 166]); }
+        c.s = s; c.kind = 'wall';
+      } else { c.s = [[64, 72, 'slab'], [136, 144, 'slab'], [208, 212, 'slab'], [212, 216, 'roof']]; c.kind = 'in'; }
+    }
+    // лестница 1→2: x=19, y=13..11, вверх к -y; площадка (19,10)
+    for (let i = 0; i < 3; i++) { const c = at(19, 13 - i); c.s = [[136, 144, 'slab'], [208, 212, 'slab'], [212, 216, 'roof']]; c.ramp = { dx: 0, dy: -1, z0: i * 24, z1: (i + 1) * 24 }; }
+    // лестница 2→3: x=24, y=11..13, вверх к +y; площадка (24,14)
+    for (let i = 0; i < 3; i++) { const c = at(24, 11 + i); c.s = [[64, 72, 'slab'], [208, 212, 'slab'], [212, 216, 'roof']]; c.ramp = { dx: 0, dy: 1, z0: 72 + i * 24, z1: 72 + (i + 1) * 24 }; }
+    for (const [x, y] of [[18, 12], [25, 12], [21, 9], [22, 9], [21, 15], [22, 15]]) { const c = at(x, y); c.s = carve([[0, 216, 'tower']], 0, 53); c.s = carve(c.s, 94, 122); c.s = carve(c.s, 166, 194); c.kind = 'door'; B.trims.push([x, y, 53]); }
+    for (const [x, y] of [[18, 10], [18, 14], [25, 10], [25, 14]]) { const c = at(x, y); c.s = carve(c.s, 22, 50); B.trims.push([x, y, 22]); }
+    // площадка вокруг башни свободна
+    for (let y = y0 - 1; y <= y1 + 1; y++) for (let x = x0 - 1; x <= x1 + 1; x++) if (x === x0 - 1 || x === x1 + 1 || y === y0 - 1 || y === y1 + 1) { const c = at(x, y); if (c.kind !== 'out') { c.s = []; c.kind = 'out'; c.ramp = null; } }
+  }
+
+  function mirror(B) {
+    const g = B.g;
+    for (let y = 0; y < H; y++) for (let x = 0; x < HALF; x++) {
+      const src = g[y * W + x], dst = g[y * W + (W - 1 - x)];
+      dst.s = src.s.map((r) => r.slice()); dst.kind = src.kind;
+      dst.ramp = src.ramp ? { dx: -src.ramp.dx, dy: src.ramp.dy, z0: src.ramp.z0, z1: src.ramp.z1 } : null;
+      dst.spawn = src.spawn === 'A' ? 'B' : src.spawn;
+    }
+    const tr = B.trims.slice(); for (const t of tr) if (t[0] < HALF) B.trims.push([W - 1 - t[0], t[1], t[2]]);
+    for (const t of B.trucks.slice()) B.trucks.push({ x: W - 2 - t.x, y: t.y, team: 'B' });
+    for (const c of B.chimneys.slice()) B.chimneys.push([W - 1 - c[0], c[1], c[2]]);
+  }
+
+  function border(B) {
+    for (let x = 0; x < W; x++) { B.at(x, 0).s = [[0, 120, 'border']]; B.at(x, 0).kind = 'wall'; B.at(x, H - 1).s = [[0, 120, 'border']]; B.at(x, H - 1).kind = 'wall'; }
+    for (let y = 0; y < H; y++) { B.at(0, y).s = [[0, 120, 'border']]; B.at(0, y).kind = 'wall'; B.at(W - 1, y).s = [[0, 120, 'border']]; B.at(W - 1, y).kind = 'wall'; }
+  }
+
+  // ---------------- пять карт ----------------
   const DEFS = [
-    {
-      name: 'Деревня', theme: 'village',
-      half: [
-        '####################',
-        '#AA.................',
-        '#AA..#####w####.....',
-        '#AA..#,,,,,,,,#..c..',
-        '#....w,,,,,,,,D..c..',
-        '#....#,,,,,,,,#.....',
-        '#....###D######.....',
-        '#.c.................',
-        '#.cc.........#ww####',
-        '#............#,,,,,,',
-        '#..#w#D##....D,,,,,,',
-        '#..#,,,,#....#,,,,,,',
-        '#..w,,,,w....w,,,,,,',
-        '#..#,,,,#....#,,,,,,',
-        '#..##D###....D,,,,,,',
-        '#............#,,,,,,',
-        '#..c.........#ww####',
-        '#.cC................',
-        '#....###D######.....',
-        '#....#,,,,,,,,#..c..',
-        '#AA..w,,,,,,,,D..cC.',
-        '#AA..#,,,,,,,,#.....',
-        '#AA.......c.........',
-        '####################',
-      ],
-    },
-    {
-      name: 'Пустыня', theme: 'desert',
-      half: [
-        '####################',
-        '#AAA......#.........',
-        '#AAA......#..####D##',
-        '#.........#..#,,,,,,',
-        '#..#####..#..w,,,,,,',
-        '#..#,,,D.....#,,,,,,',
-        '#..#,,,#.....###w###',
-        '#..##w##............',
-        '#...........c.......',
-        '######..C...cc....##',
-        '#.........#.......#,',
-        '#.........#.......D,',
-        '#...####..#.......#,',
-        '#...#,,w..####....#,',
-        '#...D,,#..........##',
-        '#...####......c.....',
-        '#.............cC....',
-        '######..#####.......',
-        '#.......#,,,#..####.',
-        '#.......D,,,w..#,,D.',
-        '#..cc...#,,,#..#,,#.',
-        '#AAA....##D##..####.',
-        '#AAA................',
-        '####################',
-      ],
-    },
-    {
-      name: 'Город', theme: 'city',
-      half: [
-        '####################',
-        '#AA.................',
-        '#AA.####w####..#####',
-        '#...#,,,,,,,#..#,,,,',
-        '#...w,,,,,,,D..D,,,,',
-        '#...#,,,,,,,#..#,,,,',
-        '#...###D#####..##w##',
-        '#...................',
-        '#..c.....C..........',
-        '####..#w##D#..c.....',
-        '#.....#,,,,#........',
-        '#.....w,,,,#..######',
-        '#.....#,,,,D..D,,,,,',
-        '#.....######..#,,,,,',
-        '#.............#,,,,,',
-        '#..cC.........###w##',
-        '#...................',
-        '#...#####D###...c...',
-        '#...#,,,,,,,#...cc..',
-        '#...w,,,,,,,w.......',
-        '#...#,,,,,,,#..#####',
-        '#AA.#####D###..D,,,,',
-        '#AA............#,,,,',
-        '####################',
-      ],
-    },
+    { name: 'Деревня', theme: 'village', build(B) {
+      B.truck(2, 10);
+      B.house2(6, 2, { doors: [[9, 6], [12, 4]], wins: [[6, 4]] });
+      B.house2(6, 19, { doors: [[9, 19], [12, 21]], wins: [[6, 21]], rampRow: 'bottom' });
+      B.house(14, 2, 17, 6, { doors: [[15, 6]], wins: [[17, 4]], chimney: [15, 3] });
+      B.house(14, 19, 17, 23, { doors: [[15, 19]], wins: [[17, 21]], chimney: [16, 22] });
+      B.fence(6, 9, 9, 9); B.fence(6, 16, 9, 16);
+      B.crate(12, 11); B.crate(12, 12, true); B.crate(13, 14);
+      B.tree(4, 5); B.tree(3, 20); B.tree(15, 9); B.tree(15, 16); B.tree(10, 13);
+      B.barrel(19, 4); B.barrel(19, 21);
+      B.crate(20, 7); B.crate(20, 18);
+    } },
+    { name: 'Пустыня', theme: 'desert', build(B) {
+      B.truck(2, 11);
+      B.house2(5, 3, { doors: [[8, 7], [11, 5]], wins: [[5, 5]] });
+      B.house(5, 17, 10, 22, { doors: [[10, 19], [7, 17]], wins: [[5, 19], [8, 22]] });
+      B.wall(13, 2, 13, 7); B.wall(13, 18, 13, 23);
+      B.house(15, 3, 19, 6, { doors: [[17, 6]], wins: [[19, 4]] });
+      B.house2(14, 18, { doors: [[17, 18], [14, 20]], wins: [[20, 20]], rampRow: 'bottom' });
+      B.sand(9, 10); B.sand(9, 11); B.sand(9, 15); B.sand(9, 16);
+      B.crate(12, 12); B.crate(12, 13, true); B.crate(16, 9); B.crate(16, 16);
+      B.barrel(3, 3); B.barrel(3, 22); B.crate(20, 2); B.crate(20, 23, true);
+    } },
+    { name: 'Город', theme: 'city', build(B) {
+      B.truck(2, 11);
+      B.house2(5, 2, { doors: [[8, 6], [5, 4]], wins: [[11, 4]] });
+      B.house2(5, 19, { doors: [[8, 19], [5, 21]], wins: [[11, 21]], rampRow: 'bottom' });
+      B.house(13, 2, 18, 6, { doors: [[15, 6], [13, 4]], wins: [[18, 4]] });
+      B.house(13, 19, 18, 23, { doors: [[15, 19], [13, 21]], wins: [[18, 21]] });
+      B.wall(8, 10, 9, 10); B.wall(8, 15, 9, 15);
+      B.crate(11, 12); B.crate(11, 13, true); B.barrel(15, 9); B.barrel(15, 16);
+      B.crate(6, 12); B.crate(6, 13);
+      B.tree(12, 8); B.tree(12, 17); B.crate(20, 2, true); B.crate(20, 23);
+    } },
+    { name: 'Осень', theme: 'autumn', build(B) {
+      B.truck(2, 11);
+      B.house2(6, 3, { doors: [[9, 7], [12, 5]], wins: [[6, 5]] });
+      B.house(5, 17, 10, 22, { doors: [[10, 20], [7, 17]], wins: [[5, 19]], chimney: [7, 20] });
+      B.house(14, 19, 18, 23, { doors: [[16, 19]], wins: [[18, 21]], chimney: [15, 22] });
+      B.fence(14, 3, 14, 7); B.fence(15, 7, 17, 7);
+      B.tree(4, 3); B.tree(4, 22); B.tree(12, 10); B.tree(12, 15); B.tree(16, 3); B.tree(16, 13); B.tree(9, 12); B.tree(19, 5); B.tree(19, 20);
+      B.crate(13, 12); B.crate(13, 13, true); B.barrel(8, 14);
+      B.crate(20, 2); B.crate(20, 23);
+    } },
+    { name: 'Зима', theme: 'winter', build(B) {
+      B.truck(2, 10);
+      B.house2(6, 2, { doors: [[9, 6], [12, 4]], wins: [[6, 4]] });
+      B.house2(13, 19, { doors: [[16, 19], [13, 21]], wins: [[19, 21]], rampRow: 'bottom' });
+      B.house(5, 18, 10, 22, { doors: [[7, 18], [10, 20]], wins: [[5, 20]], chimney: [8, 20] });
+      B.house(15, 2, 19, 6, { doors: [[17, 6]], wins: [[19, 4]], chimney: [17, 3] });
+      B.sand(9, 10); B.sand(10, 10); B.sand(9, 15); B.sand(10, 15);
+      B.tree(4, 5); B.tree(3, 21); B.tree(13, 9); B.tree(13, 16); B.tree(16, 10); B.tree(11, 13);
+      B.crate(14, 12); B.crate(14, 13, true); B.barrel(20, 7); B.barrel(20, 18);
+    } },
   ];
 
   function buildMap(def) {
-    const rows = def.half.map((h) => {
-      h = h.padEnd(20, '.').slice(0, 20);
-      return h + h.split('').reverse().map((c) => (c === 'A' ? 'B' : c)).join('');
-    });
-    const H = rows.length, W = rows[0].length;
-    const grid = new Uint8Array(W * H);
-    const spawns = { A: [], B: [] };
-    const floor = [];
+    const B = Builder(def.theme);
+    def.build(B);
+    mirror(B);
+    tower(B);
+    border(B);
+    const spawns = { A: [], B: [] }, floor = [];
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      let c = rows[y][x];
-      if (x === 0 || y === 0 || x === W - 1 || y === H - 1) c = '#';
-      const t = CH[c] ?? T.OUT;
-      grid[y * W + x] = t;
-      if (c === 'A' || c === 'B') spawns[c].push([x, y]);
-      if (t === T.OUT || t === T.IN || t === T.DOOR) floor.push([x, y]);
+      const c = B.at(x, y);
+      if (c.spawn) spawns[c.spawn].push([x, y]);
+      if (walkable(c)) floor.push([x, y]);
     }
-    return { name: def.name, theme: def.theme, W, H, grid, spawns, floor, pw: W * C.TILE, ph: H * C.TILE };
+    return { name: def.name, theme: def.theme, W, H, cols: B.g, spawns, floor, trims: B.trims, trucks: B.trucks, chimneys: B.chimneys, pw: W * C.TILE, ph: H * C.TILE };
   }
-  const MAPS = DEFS.map(buildMap);
 
-  function tileAt(map, tx, ty) { if (tx < 0 || ty < 0 || tx >= map.W || ty >= map.H) return T.WALL; return map.grid[ty * map.W + tx]; }
-  // Для ботов и путей: проходима ли клетка пешком
-  function walkable(t) { return t === T.OUT || t === T.IN || t === T.DOOR; }
-  function isWall(map, tx, ty) { return !walkable(tileAt(map, tx, ty)); }
+  const OOB = { s: [[0, 1e5, 'border']], ramp: null, kind: 'wall' };
+  function colAt(map, tx, ty) { if (tx < 0 || ty < 0 || tx >= map.W || ty >= map.H) return OOB; return map.cols[ty * map.W + tx]; }
+  // Можно ли пройти клетку по земле (для ботов)
+  function walkable(c) {
+    if (c.kind === 'bed') return true;
+    if (c.ramp) return false;
+    for (const r of c.s) if (r[1] > C.STEP && r[0] < C.PH + 2) return false;
+    return true;
+  }
+  function isWall(map, tx, ty) { return !walkable(colAt(map, tx, ty)); }
 
-  function blocksBody(t, z) {
-    if (t === T.WALL || t === T.WIN || t === T.TALL) return true;
-    if (t === T.CRATE) return z < CRATE_TOP - 4;
+  function rampSurf(c, tx, ty, x, y) {
+    const TL = C.TILE, r = c.ramp;
+    const fx = Math.max(0, Math.min(1, (x - tx * TL) / TL)), fy = Math.max(0, Math.min(1, (y - ty * TL) / TL));
+    const f = r.dx > 0 ? fx : r.dx < 0 ? 1 - fx : r.dy > 0 ? fy : 1 - fy;
+    return r.z0 + (r.z1 - r.z0) * f;
+  }
+  function tiles(x, y, r, fn) {
+    const TL = C.TILE;
+    const x0 = Math.floor((x - r) / TL), x1 = Math.floor((x + r) / TL), y0 = Math.floor((y - r) / TL), y1 = Math.floor((y + r) / TL);
+    for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) if (fn(tx, ty) === true) return true;
     return false;
   }
   function collides(map, x, y, r, z) {
-    const TL = C.TILE;
-    const x0 = Math.floor((x - r) / TL), x1 = Math.floor((x + r) / TL);
-    const y0 = Math.floor((y - r) / TL), y1 = Math.floor((y + r) / TL);
-    for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) if (blocksBody(tileAt(map, tx, ty), z)) return true;
-    return false;
+    return tiles(x, y, r, (tx, ty) => {
+      const c = colAt(map, tx, ty);
+      for (const s of c.s) if (s[1] > z + C.STEP && s[0] < z + C.PH) return true;
+      if (c.ramp && rampSurf(c, tx, ty, x, y) > z + C.RAMP_STEP && c.ramp.z0 < z + C.PH) return true;
+      return false;
+    });
   }
   function groundAt(map, x, y, r, z) {
-    const TL = C.TILE;
-    const x0 = Math.floor((x - r) / TL), x1 = Math.floor((x + r) / TL);
-    const y0 = Math.floor((y - r) / TL), y1 = Math.floor((y + r) / TL);
     let g = 0;
-    for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) if (tileAt(map, tx, ty) === T.CRATE && z >= CRATE_TOP - 4) g = CRATE_TOP;
+    tiles(x, y, r, (tx, ty) => {
+      const c = colAt(map, tx, ty);
+      for (const s of c.s) if (s[1] <= z + C.STEP && s[1] > g) g = s[1];
+      if (c.ramp) { const h = rampSurf(c, tx, ty, x, y); if (h <= z + C.RAMP_STEP && h > g) g = h; }
+    });
     return g;
+  }
+  function ceilAt(map, x, y, r, z) {
+    let cz = Infinity;
+    tiles(x, y, r, (tx, ty) => { for (const s of colAt(map, tx, ty).s) if (s[0] >= z + C.PH - 1 && s[0] < cz) cz = s[0]; });
+    return cz;
   }
   function move(map, x, y, dx, dy, r, z) {
     const TL = C.TILE;
     if (dx) {
       let nx = x + dx;
       if (collides(map, nx, y, r, z)) {
-        if (dx > 0) nx = Math.floor((nx + r) / TL) * TL - r - 0.01; else nx = (Math.floor((nx - r) / TL) + 1) * TL + r + 0.01;
-        if (collides(map, nx, y, r, z)) nx = x;
+        nx = dx > 0 ? Math.floor((nx + r) / TL) * TL - r - 0.01 : (Math.floor((nx - r) / TL) + 1) * TL + r + 0.01;
+        if ((dx > 0 && nx < x) || (dx < 0 && nx > x) || collides(map, nx, y, r, z)) nx = x;
       }
       x = nx;
     }
     if (dy) {
       let ny = y + dy;
       if (collides(map, x, ny, r, z)) {
-        if (dy > 0) ny = Math.floor((ny + r) / TL) * TL - r - 0.01; else ny = (Math.floor((ny - r) / TL) + 1) * TL + r + 0.01;
-        if (collides(map, x, ny, r, z)) ny = y;
+        ny = dy > 0 ? Math.floor((ny + r) / TL) * TL - r - 0.01 : (Math.floor((ny - r) / TL) + 1) * TL + r + 0.01;
+        if ((dy > 0 && ny < y) || (dy < 0 && ny > y) || collides(map, x, ny, r, z)) ny = y;
       }
       y = ny;
     }
     return { x, y };
   }
-
-  // Направление движения из клавиш (1=W 2=S 4=A 8=D) относительно взгляда yaw
   function moveDir(k, yaw) {
     let f = 0, s = 0;
     if (k & 1) f += 1; if (k & 2) f -= 1; if (k & 8) s += 1; if (k & 4) s -= 1;
@@ -185,21 +268,30 @@
     const len = Math.hypot(f, s); f /= len; s /= len;
     return [Math.cos(yaw) * f + Math.cos(yaw + Math.PI / 2) * s, Math.sin(yaw) * f + Math.sin(yaw + Math.PI / 2) * s];
   }
-
-  // Один шаг физики игрока. st: {x,y,z,vz,og}
+  // Шаг физики. st: {x,y,z,vz,og}. Возвращает true, если игрок шёл.
   function step(map, st, k, yaw, jump, speed, dt) {
     const [mx, my] = moveDir(k, yaw);
-    if (mx || my) { const r = move(map, st.x, st.y, mx * speed * dt, my * speed * dt, C.R, st.z); st.x = r.x; st.y = r.y; }
+    let moved = false;
+    if (mx || my) { const ox = st.x, oy = st.y; const r = move(map, st.x, st.y, mx * speed * dt, my * speed * dt, C.R, st.z); st.x = r.x; st.y = r.y; moved = Math.abs(r.x - ox) + Math.abs(r.y - oy) > 0.01; st.blocked = !moved; } else st.blocked = false;
     const g = groundAt(map, st.x, st.y, C.R, st.z);
     if (st.og && jump) { st.vz = C.JUMP_V; st.og = false; }
-    if (!st.og || st.z > g) {
-      st.vz -= C.G * dt; st.z += st.vz * dt;
-      if (st.z <= g) { st.z = g; st.vz = 0; st.og = true; } else st.og = false;
+    if (st.og) {
+      if (g > st.z) st.z = g; // подъём по лестнице
+      else if (st.z - g <= 6) st.z = g; // спуск по лестнице
+      else { st.og = false; st.vz = 0; }
+    }
+    if (!st.og) {
+      st.vz -= C.G * dt;
+      let nz = st.z + st.vz * dt;
+      if (st.vz > 0) { const cz = ceilAt(map, st.x, st.y, C.R, st.z); if (nz + C.PH > cz) { nz = cz - C.PH; st.vz = 0; } }
+      const g2 = groundAt(map, st.x, st.y, C.R, Math.max(st.z, nz));
+      if (nz <= g2) { nz = g2; st.vz = 0; st.og = true; }
+      st.z = nz;
     }
     return !!(mx || my);
   }
 
-  // 3D-луч по карте. Возвращает {t, n:[nx,ny,nz]} (нормаль поверхности) или t=max.
+  // 3D-луч по карте: {t, n:[nx,ny,nz]} (n=null — улетело)
   function ray3(map, ox, oy, oz, dx, dy, dz, max) {
     const TL = C.TILE;
     let tx = Math.floor(ox / TL), ty = Math.floor(oy / TL);
@@ -208,34 +300,40 @@
     let tMX = dx > 0 ? ((tx + 1) * TL - ox) / dx : dx < 0 ? (ox - tx * TL) / -dx : Infinity;
     let tMY = dy > 0 ? ((ty + 1) * TL - oy) / dy : dy < 0 ? (oy - ty * TL) / -dy : Infinity;
     let tIn = 0, side = [0, 0, 0];
-    for (let i = 0; i < 300 && tIn < max; i++) {
+    for (let i = 0; i < 400 && tIn < max; i++) {
+      if (tx < 0 || ty < 0 || tx >= map.W || ty >= map.H) break;
       const tOut = Math.min(tMX, tMY, max);
-      const t = tileAt(map, tx, ty);
+      const c = map.cols[ty * map.W + tx];
       const zA = oz + dz * tIn, zB = oz + dz * tOut;
       let best = Infinity, n = null;
-      for (const [z0, z1] of SOLID[t]) {
+      for (const [z0, z1] of c.s) {
         if (zA >= z0 && zA <= z1) { if (tIn < best) { best = tIn; n = side; } }
         else if (zA > z1 && zB < z1) { const tt = tIn + ((zA - z1) / (zA - zB)) * (tOut - tIn); if (tt < best) { best = tt; n = [0, 0, 1]; } }
         else if (zA < z0 && zB > z0) { const tt = tIn + ((z0 - zA) / (zB - zA)) * (tOut - tIn); if (tt < best) { best = tt; n = [0, 0, -1]; } }
       }
+      if (c.ramp) {
+        const sa = rampSurf(c, tx, ty, ox + dx * tIn, oy + dy * tIn), sb = rampSurf(c, tx, ty, ox + dx * tOut, oy + dy * tOut);
+        const ga = zA - sa, gb = zB - sb;
+        if (ga < 0 && zA >= c.ramp.z0) { if (tIn < best) { best = tIn; n = side; } }
+        else if (ga >= 0 && gb < 0) { const tt = tIn + (ga / (ga - gb)) * (tOut - tIn); if (tt < best) { best = tt; const r = c.ramp; n = [-r.dx * 0.45, -r.dy * 0.45, 0.9]; } }
+      }
       if (zB < 0 && dz < 0) { const tt = -oz / dz; if (tt < best) { best = tt; n = [0, 0, 1]; } }
-      if (best < Infinity) return { t: best, n };
+      if (best < Infinity) return { t: Math.max(0, best), n };
       if (tOut >= max) break;
       if (tMX < tMY) { tIn = tMX; tMX += tDX; tx += sX; side = [-sX, 0, 0]; }
       else { tIn = tMY; tMY += tDY; ty += sY; side = [0, -sY, 0]; }
     }
+    if (dz < 0) { const tt = -oz / dz; if (tt < max) return { t: tt, n: [0, 0, 1] }; }
     return { t: max, n: null };
   }
 
-  // Попадание луча в игрока: тело — вертикальный цилиндр, голова — сфера
+  // Попадание луча в игрока: тело — цилиндр, голова — сфера. q: {x,y,z}
   function hitPlayer(ox, oy, oz, dx, dy, dz, q, br, hr) {
     let best = Infinity, head = false;
-    // голова
     const hx = q.x - ox, hy = q.y - oy, hz = q.z + 39 - oz;
     const pb = hx * dx + hy * dy + hz * dz;
     const d2 = hx * hx + hy * hy + hz * hz - pb * pb;
     if (pb > 0 && d2 < hr * hr) { best = pb - Math.sqrt(hr * hr - d2); head = true; }
-    // тело
     const a = dx * dx + dy * dy;
     if (a > 1e-6) {
       const fx = ox - q.x, fy = oy - q.y;
@@ -243,10 +341,10 @@
       const disc = b * b - 4 * a * c;
       if (disc > 0) {
         const sq = Math.sqrt(disc);
-        let t0 = (-b - sq) / (2 * a), t1 = (-b + sq) / (2 * a);
+        const t0 = (-b - sq) / (2 * a), t1 = (-b + sq) / (2 * a);
         let z0 = -Infinity, z1 = Infinity;
         if (Math.abs(dz) > 1e-6) { z0 = (q.z - oz) / dz; z1 = (q.z + 34 - oz) / dz; if (z0 > z1) [z0, z1] = [z1, z0]; }
-        else if (oz < q.z || oz > q.z + 34) { z0 = Infinity; }
+        else if (oz < q.z || oz > q.z + 34) z0 = Infinity;
         const lo = Math.max(t0, z0, 0), hi = Math.min(t1, z1);
         if (lo <= hi && lo < best) { best = lo; head = false; }
       }
@@ -282,7 +380,8 @@
     { key: 'm249', name: 'M249', cat: 'mg', price: 11500, dmg: 27, fire: 78, mag: 100, reload: 4800, spread: 0.05, mspread: 0.1, speed: 0.8, range: 1500, recoil: 0.003 },
     { key: 'awp', name: 'AWP', cat: 'sniper', price: 15000, dmg: 150, fire: 1450, mag: 10, reload: 3000, spread: 0.13, mspread: 0.2, sspread: 0, scope: 2, speed: 0.82, auto: false, range: 2600, pierce: true, reward: 100, recoil: 0 },
   ];
-  const WEAPONS = WLIST.map((w, i) => Object.assign({}, WDEF, w, { id: i }));
+  // точность +25%: разброс и отдача ×0.75
+  const WEAPONS = WLIST.map((w, i) => { const o = Object.assign({}, WDEF, w, { id: i }); o.spread *= 0.75; o.mspread *= 0.75; o.sspread *= 0.75; o.recoil *= 0.75; return o; });
   const WKEY = {}; WEAPONS.forEach((w) => (WKEY[w.key] = w.id));
 
   // ---------- Скины ----------
@@ -298,16 +397,77 @@
     { key: 'lisa', name: 'Агент Лиза', price: 16000, female: true, shirt: '#263238', vest: '#3b4b53', boots: '#111', skin: '#f2c8a4', hair: '#f0cf6a', hat: 'none', trail: '#f48fb1' },
     { key: 'eva', name: 'Снайпер Ева', price: 20000, female: true, shirt: '#4e5d3a', vest: '#33402a', boots: '#2a2a20', skin: '#e3b28c', hair: '#7b3f1d', hat: 'none', trail: '#a5d6a7' },
     { key: 'valkyrie', name: 'Валькирия', price: 25000, female: true, shirt: '#7a1f2b', vest: '#3a0f15', boots: '#1a0a0c', skin: '#f5d2b5', hair: '#ececec', hat: 'none', trail: '#ff8a80' },
-  ].map((s, i) => Object.assign({ id: i, female: false, hitR: s.female ? 7.5 : 10, headR: s.female ? 4.8 : 5.5 }, s));
+  ].map((s, i) => Object.assign({ id: i, female: false, hitR: s.female ? 8.5 : 11, headR: s.female ? 5.2 : 6.3 }, s));
   const SKEY = {}; SKINS.forEach((s) => (SKEY[s.key] = s.id));
+
+
+  // ---------- Раскраски оружия и кейсы (как в CS:GO) ----------
+  const RARITY = [
+    null,
+    { name: 'Армейское', color: '#4b69ff', w: 0.7992 },
+    { name: 'Запрещённое', color: '#8847ff', w: 0.1598 },
+    { name: 'Засекреченное', color: '#d32ce6', w: 0.032 },
+    { name: 'Тайное', color: '#eb4b4b', w: 0.0064 },
+    { name: 'Редкий особый', color: '#e4ae39', w: 0.0026 },
+  ];
+  // pattern: solid | camo | tiger | carbon | fade | neon | gold | doppler | hex | snow
+  const FLIST = [
+    // кейс «Листопад»
+    { w: 'glock', name: 'Осенний камуфляж', r: 1, case: 0, p: 'camo', c: ['#8a4b1f', '#c9772b', '#3d2b1a'] },
+    { w: 'mp5', name: 'Ржавчина', r: 1, case: 0, p: 'camo', c: ['#7a3b1c', '#a65a2a', '#4a3324'] },
+    { w: 'galil', name: 'Дюна', r: 1, case: 0, p: 'camo', c: ['#c8a46a', '#9b7b46', '#e3cf9e'] },
+    { w: 'p90', name: 'Лесник', r: 1, case: 0, p: 'camo', c: ['#3f5a2c', '#6b7f3a', '#26301c'] },
+    { w: 'famas', name: 'Кирпич', r: 1, case: 0, p: 'hex', c: ['#7a3527', '#a8503a', '#2d1a14'] },
+    { w: 'usp', name: 'Неоновый пульс', r: 2, case: 0, p: 'neon', c: ['#14161c', '#00e5ff', '#ff3d8b'] },
+    { w: 'm4a1', name: 'Мегаполис', r: 2, case: 0, p: 'hex', c: ['#5a6270', '#8fa0b5', '#2a2f37'] },
+    { w: 'ump45', name: 'Тигр', r: 2, case: 0, p: 'tiger', c: ['#e08a1e', '#1a1a1a', '#f2b544'] },
+    { w: 'ak47', name: 'Закат', r: 3, case: 0, p: 'fade', c: ['#ff3d2e', '#ff9f1c', '#ffd23f'] },
+    { w: 'deagle', name: 'Карбон', r: 3, case: 0, p: 'carbon', c: ['#1c1d21', '#34363c', '#d4af37'] },
+    { w: 'awp', name: 'Изумрудный змей', r: 4, case: 0, p: 'neon', c: ['#0f2a1a', '#2bff88', '#ffd23f'] },
+    { w: 'ak47', name: 'Огненный листопад', r: 4, case: 0, p: 'fade', c: ['#b3170e', '#ff6a00', '#ffe066'] },
+    { w: 'knife', model: 'karambit', name: 'Керамбит | Градиент', r: 5, case: 0, p: 'fade', c: ['#ff4fd8', '#7a5cff', '#ffd23f'] },
+    { w: 'knife', model: 'butterfly', name: 'Бабочка | Допплер', r: 5, case: 0, p: 'doppler', c: ['#ff2e7e', '#3a1c71', '#1fd1f9'] },
+    { w: 'knife', model: 'bayonet', name: 'Штык-нож | Золото', r: 5, case: 0, p: 'gold', c: ['#f6d365', '#b8860b', '#fff2b0'] },
+    // кейс «Метель»
+    { w: 'scout', name: 'Снежный барс', r: 1, case: 1, p: 'snow', c: ['#e8eef2', '#9fb3c0', '#5f7280'] },
+    { w: 'xm1014', name: 'Лёд', r: 1, case: 1, p: 'snow', c: ['#cfe8ff', '#7fb2e5', '#3a6ea5'] },
+    { w: 'mac10', name: 'Мороз', r: 1, case: 1, p: 'camo', c: ['#dfe7ec', '#8a9aa6', '#4a5560'] },
+    { w: 'fiveseven', name: 'Иней', r: 1, case: 1, p: 'snow', c: ['#f3f6f8', '#b8c7d1', '#6d7f8c'] },
+    { w: 'aug', name: 'Северное сияние', r: 2, case: 1, p: 'fade', c: ['#00c9a7', '#4d8af0', '#c86dd7'] },
+    { w: 'sg552', name: 'Пиксель', r: 2, case: 1, p: 'hex', c: ['#2d3a4a', '#5e7a99', '#a9c1d9'] },
+    { w: 'elite', name: 'Серебро', r: 2, case: 1, p: 'gold', c: ['#e6e9ed', '#8e959c', '#ffffff'] },
+    { w: 'm249', name: 'Буран', r: 3, case: 1, p: 'tiger', c: ['#e8eef2', '#3a4a5a', '#9fb3c0'] },
+    { w: 'awp', name: 'Арктика', r: 3, case: 1, p: 'snow', c: ['#f5f8fa', '#1f6feb', '#9fb3c0'] },
+    { w: 'ak47', name: 'Полярная ночь', r: 4, case: 1, p: 'neon', c: ['#0b1020', '#33e1ff', '#7c5cff'] },
+    { w: 'deagle', name: 'Ледяной огонь', r: 4, case: 1, p: 'fade', c: ['#1fd1f9', '#ffffff', '#ff4f2e'] },
+    { w: 'knife', model: 'karambit', name: 'Керамбит | Лёд', r: 5, case: 1, p: 'doppler', c: ['#1fd1f9', '#0b3d91', '#e0f7ff'] },
+    { w: 'knife', model: 'butterfly', name: 'Бабочка | Градиент', r: 5, case: 1, p: 'fade', c: ['#ffd23f', '#ff3d8b', '#7c5cff'] },
+    { w: 'knife', model: 'bayonet', name: 'Штык-нож | Тёмная сталь', r: 5, case: 1, p: 'carbon', c: ['#16171a', '#2e3036', '#ff3d2e'] },
+  ];
+  const FINISHES = FLIST.map((f, i) => Object.assign({ id: i, model: null }, f));
+  const CASES = [
+    { key: 'leaf', name: 'Кейс «Листопад»', price: 2000, color: '#e0761e' },
+    { key: 'blizzard', name: 'Кейс «Метель»', price: 3500, color: '#3a8bd8' },
+  ];
+  function rollCase(ci, rnd) {
+    const items = FINISHES.filter((f) => f.case === ci);
+    let x = (rnd || Math.random)(), tier = 1;
+    for (let r = 5; r >= 1; r--) { x -= RARITY[r].w; if (x < 0) { tier = r; break; } }
+    let pool = items.filter((f) => f.r === tier);
+    if (!pool.length) pool = items.filter((f) => f.r === 1);
+    return pool[Math.floor((rnd || Math.random)() * pool.length)];
+  }
+  // проверка: подходит ли раскраска к оружию
+  function finishFits(fid, wid) { const f = FINISHES[fid], w = WEAPONS[wid]; return !!(f && w && f.w === w.key); }
 
   function speedOf(wid, scoped) {
     const w = WEAPONS[wid] || WEAPONS[0];
     return C.SPEED * w.speed * (scoped && w.scope ? 0.6 : 1);
   }
   function dirFrom(yaw, pitch) { const cp = Math.cos(pitch); return [Math.cos(yaw) * cp, Math.sin(yaw) * cp, Math.sin(pitch)]; }
+  const MAPS = DEFS.map(buildMap);
 
-  const api = { C, T, SOLID, CRATE_TOP, MAPS, WEAPONS, WKEY, SKINS, SKEY, tileAt, walkable, isWall, collides, groundAt, move, moveDir, step, ray3, hitPlayer, speedOf, dirFrom };
+  const api = { C, MAPS, WEAPONS, WKEY, SKINS, SKEY, FINISHES, CASES, RARITY, rollCase, finishFits, colAt, walkable, isWall, collides, groundAt, ceilAt, move, moveDir, step, ray3, hitPlayer, rampSurf, speedOf, dirFrom };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Shared = api;
 })(this);

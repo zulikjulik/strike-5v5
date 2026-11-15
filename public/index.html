@@ -3,149 +3,227 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Strike 5×5 — 3D</title>
+<title>STRIKE 5×5</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  :root { --acc: #ff7a1a; --acc2: #2f6fe0; --ink: #1b2029; --sub: #5d6676; --line: #e3e6ec; --panel: rgba(255,255,255,0.86); --soft: #f3f5f8; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0c0e12; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #e8ebf0; user-select: none; }
-  canvas#gl, canvas#hud { position: fixed; inset: 0; display: block; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe3f2; font-family: Inter, system-ui, sans-serif; color: var(--ink); user-select: none; }
+  canvas#gl, canvas#hud { position: fixed; inset: 0; display: block; width: 100vw; height: 100vh; }
   canvas#hud { pointer-events: none; }
-  .card img { width: 100%; height: 150px; object-fit: contain; background: radial-gradient(circle at 50% 60%, #ffffff0c, transparent 70%); border-radius: 10px; }
   .hidden { display: none !important; }
-  button { font-family: inherit; }
+  button, input, select { font-family: inherit; }
+  .disp { font-family: Rajdhani, sans-serif; font-weight: 700; letter-spacing: 1px; }
 
-  #menu { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
-    background: radial-gradient(1200px 600px at 70% -10%, #23324a 0%, transparent 60%), radial-gradient(900px 500px at 0% 110%, #3a1f24 0%, transparent 55%), #0c0e12; }
-  #menu::before { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .06;
-    background-image: linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px); background-size: 48px 48px; }
-  .topbar { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 18px 32px; border-bottom: 1px solid #ffffff12; }
-  .logo { font-size: 30px; font-weight: 800; letter-spacing: 2px; }
-  .logo span { color: #4ea1ff; } .logo b { color: #ff5a5a; }
-  .money { font-size: 22px; font-weight: 700; color: #7ee787; background: #0f1a12; border: 1px solid #234a2b; padding: 8px 16px; border-radius: 10px; }
-  .main { position: relative; flex: 1; display: flex; min-height: 0; }
-  nav { width: 220px; padding: 24px 16px; display: flex; flex-direction: column; gap: 6px; border-right: 1px solid #ffffff10; }
-  nav button { text-align: left; padding: 13px 16px; font-size: 16px; font-weight: 600; color: #aab2c0; background: transparent; border: 0; border-radius: 10px; cursor: pointer; }
-  nav button:hover { background: #ffffff0d; color: #fff; }
-  nav button.active { background: #4ea1ff22; color: #fff; box-shadow: inset 3px 0 0 #4ea1ff; }
-  .tab { flex: 1; overflow-y: auto; padding: 28px 36px; }
-  h2 { margin: 0 0 18px; font-size: 24px; }
+  #menu { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; background: linear-gradient(90deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.05) 40%, rgba(255,255,255,0.05) 62%, rgba(255,255,255,0.5) 100%); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 36px; }
+  .logo { font-size: 34px; letter-spacing: 3px; color: var(--ink); text-shadow: 0 2px 12px rgba(255,255,255,0.8); }
+  .logo span { color: var(--acc); }
+  .chip { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--panel); backdrop-filter: blur(10px); border: 1px solid #fff; border-radius: 12px; box-shadow: 0 6px 24px rgba(30,40,60,0.12); }
+  .chip small { font-size: 11px; letter-spacing: 1.5px; color: var(--sub); font-weight: 600; }
+  .money { font-size: 22px; color: #1f9d4c; }
+  .main { flex: 1; display: flex; min-height: 0; gap: 0; padding: 0 36px 28px; }
+  nav { width: 290px; display: flex; flex-direction: column; gap: 8px; padding-top: 10px; }
+  nav button { display: flex; align-items: center; gap: 14px; text-align: left; padding: 14px 18px; font-size: 22px; color: var(--ink); background: var(--panel); backdrop-filter: blur(10px); border: 1px solid #fff; border-radius: 12px; cursor: pointer; box-shadow: 0 4px 18px rgba(30,40,60,0.10); transition: transform .12s, box-shadow .12s; }
+  nav button:hover { transform: translateX(4px); box-shadow: 0 8px 24px rgba(30,40,60,0.16); }
+  nav button.active { box-shadow: inset 4px 0 0 var(--acc), 0 8px 24px rgba(30,40,60,0.16); }
+  nav button .n { font-size: 14px; color: var(--sub); width: 20px; }
+  nav button.play { background: var(--acc); color: #fff; border-color: var(--acc); font-size: 34px; padding: 18px 20px; flex-direction: column; align-items: flex-start; gap: 2px; clip-path: polygon(0 0, 100% 0, 100% 72%, 93% 100%, 0 100%); border-radius: 12px 12px 0 12px; }
+  nav button.play small { font-family: Inter, sans-serif; font-size: 13px; font-weight: 600; letter-spacing: 0; opacity: 0.95; }
+  nav .admin-link, nav .admin-link.active { margin-top: auto; align-self: flex-start; font-size: 13px; color: var(--sub); background: none; border: 0; cursor: pointer; padding: 6px 4px; box-shadow: none; backdrop-filter: none; font-family: Inter, sans-serif; }
+  .stage { flex: 1; min-width: 0; position: relative; }
+  #preview { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); width: min(460px, 100%); height: min(620px, 100%); }
+  .skinlabel { position: absolute; left: 24px; top: 14px; padding: 10px 16px; }
+  .skinlabel b { display: block; font-family: Rajdhani, sans-serif; font-size: 26px; }
+  .skinlabel span { font-size: 12px; color: #c2410c; font-weight: 600; }
+  .side { width: 360px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding-bottom: 4px; }
+  .panel { background: var(--panel); backdrop-filter: blur(12px); border: 1px solid #fff; border-radius: 16px; padding: 18px; box-shadow: 0 8px 30px rgba(30,40,60,0.12); }
+  .ptitle { font-size: 12px; letter-spacing: 2px; color: var(--sub); font-weight: 700; margin-bottom: 10px; }
+  label.lbl { display: block; font-size: 12px; color: var(--sub); font-weight: 600; margin: 10px 0 6px; }
+  input[type=text], input[type=password], select { width: 100%; padding: 11px 13px; font-size: 15px; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--ink); outline: none; }
+  input:focus, select:focus { border-color: var(--acc); }
+  .slot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; background: #fff; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; }
+  .slot small { font-size: 11px; color: var(--sub); display: block; }
+  .slot b { font-family: Rajdhani, sans-serif; font-size: 20px; }
+  .slot img { height: 34px; }
+  .btn { padding: 12px 18px; border: 0; border-radius: 10px; font-weight: 700; font-size: 15px; cursor: pointer; background: var(--soft); color: var(--ink); border: 1px solid var(--line); }
+  .btn:hover { filter: brightness(0.97); }
+  .btn.acc { background: var(--acc); color: #fff; border-color: var(--acc); }
+  .btn.blue { background: var(--acc2); color: #fff; border-color: var(--acc2); }
+  .btn.red { background: #e5484d; color: #fff; border-color: #e5484d; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .maps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .maps div { font-size: 11px; font-weight: 600; text-align: center; }
+  .maps i { display: block; height: 34px; border-radius: 6px; margin-bottom: 4px; }
+  .help { font-size: 12px; color: var(--sub); line-height: 1.8; }
+  kbd { background: #fff; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-family: inherit; font-size: 11px; }
+  #status { color: #c2410c; font-size: 13px; font-weight: 600; min-height: 16px; margin-top: 8px; }
 
-  .play-wrap { display: flex; gap: 40px; align-items: center; height: 100%; flex-wrap: wrap; }
-  #preview { width: 340px; height: 340px; border-radius: 20px; background: radial-gradient(circle, #ffffff10, transparent 70%); }
-  .play-side { width: min(420px, 100%); }
-  label.lbl { display: block; font-size: 13px; color: #8b93a3; margin: 14px 0 6px; }
-  input[type=text], select { width: 100%; padding: 12px 14px; font-size: 16px; border-radius: 10px; border: 1px solid #39414f; background: #0f1218; color: #fff; outline: none; font-family: inherit; }
-  input[type=text]:focus, select:focus { border-color: #4ea1ff; }
-  .big { margin-top: 22px; width: 100%; padding: 16px; font-size: 20px; font-weight: 800; letter-spacing: 1px; border: 0; border-radius: 12px; cursor: pointer;
-    background: linear-gradient(135deg, #4ea1ff, #2f6fe0); color: #fff; box-shadow: 0 10px 30px #2f6fe055; }
-  .big:hover { filter: brightness(1.1); }
-  .help { margin-top: 18px; font-size: 13px; color: #8b93a3; line-height: 1.9; }
-  kbd { background: #2a303c; border-radius: 4px; padding: 1px 6px; color: #ddd; font-family: inherit; font-size: 12px; }
-  #status { margin-top: 10px; color: #ffb86b; font-size: 14px; min-height: 18px; }
+  .big { flex: 1; min-width: 0; overflow-y: auto; margin-left: 24px; }
+  .big h2 { font-family: Rajdhani, sans-serif; font-size: 32px; margin: 0 0 4px; }
+  .big .note { color: var(--sub); font-size: 13px; margin-bottom: 14px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .chips button { padding: 7px 14px; border-radius: 20px; border: 1px solid var(--line); background: #fff; color: var(--sub); cursor: pointer; font-size: 13px; font-weight: 600; }
+  .chips button.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 8px; position: relative; }
+  .card.eq { border-color: var(--acc); box-shadow: 0 0 0 2px var(--acc) inset; }
+  .card img { width: 100%; height: 100px; object-fit: contain; background: linear-gradient(180deg, #f6f8fb, #eceff4); border-radius: 10px; }
+  .card.skin img { height: 170px; }
+  .card .nm { font-weight: 700; font-size: 15px; display: flex; justify-content: space-between; gap: 6px; align-items: center; }
+  .tag { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; background: var(--soft); color: var(--sub); white-space: nowrap; }
+  .tag.gold { background: #fff3d6; color: #a16207; } .tag.pink { background: #fde2ef; color: #be185d; }
+  .stats { font-size: 11px; color: var(--sub); display: grid; grid-template-columns: 86px 1fr; gap: 3px 8px; align-items: center; }
+  .bar { height: 5px; background: #eceff4; border-radius: 3px; overflow: hidden; } .bar i { display: block; height: 100%; background: var(--acc); }
+  .card .btn { margin-top: auto; padding: 9px; font-size: 13px; }
+  .rar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; border-radius: 0 0 14px 14px; }
+  .cnt { position: absolute; right: 10px; top: 10px; background: var(--ink); color: #fff; font-size: 11px; font-weight: 700; border-radius: 8px; padding: 1px 7px; }
 
-  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
-  .chip { padding: 7px 14px; border-radius: 20px; border: 1px solid #39414f; background: transparent; color: #aab2c0; cursor: pointer; font-size: 14px; }
-  .chip.active { background: #4ea1ff; border-color: #4ea1ff; color: #fff; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
-  .card { background: #151922; border: 1px solid #252b37; border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 8px; transition: transform .12s, border-color .12s; }
-  .card:hover { transform: translateY(-2px); border-color: #3a4456; }
-  .card.equipped { border-color: #4ea1ff; box-shadow: 0 0 0 1px #4ea1ff inset; }
-  .card canvas { width: 100%; height: 90px; background: radial-gradient(circle at 50% 60%, #ffffff0c, transparent 70%); border-radius: 10px; }
-  .card.skin canvas { height: 150px; }
-  .card .name { font-weight: 700; font-size: 16px; display: flex; justify-content: space-between; align-items: center; }
-  .tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: #2a303c; color: #aab2c0; }
-  .tag.pink { background: #4a1d33; color: #ff9cc6; } .tag.gold { background: #4a3a10; color: #ffd166; }
-  .stats { font-size: 12px; color: #8b93a3; display: grid; grid-template-columns: 80px 1fr; gap: 4px 8px; align-items: center; }
-  .bar { height: 5px; background: #252b37; border-radius: 3px; overflow: hidden; } .bar i { display: block; height: 100%; background: #4ea1ff; }
-  .card button { margin-top: auto; padding: 10px; border: 0; border-radius: 9px; font-weight: 700; font-size: 14px; cursor: pointer; }
-  .b-buy { background: #2ea043; color: #fff; } .b-buy:disabled { background: #2a303c; color: #6c7585; cursor: not-allowed; }
-  .b-eq { background: #2a303c; color: #fff; } .b-eq:hover { background: #3a4252; }
-  .b-on { background: #4ea1ff33; color: #9ccaff; cursor: default !important; }
-  .row { display: flex; align-items: center; gap: 16px; margin: 18px 0; max-width: 520px; }
-  .row span { width: 140px; color: #aab2c0; } .row input { flex: 1; accent-color: #4ea1ff; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+  th, td { text-align: left; padding: 11px 12px; font-size: 14px; border-bottom: 1px solid var(--line); }
+  th { font-size: 11px; letter-spacing: 1.5px; color: var(--sub); background: var(--soft); }
+  .row2 { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .row2 > div { flex: 1 1 160px; }
+  .cases { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+  .case { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .case .box { height: 120px; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #fff; font-family: Rajdhani, sans-serif; font-size: 30px; letter-spacing: 2px; text-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+  .case .items { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .case .items div { border-radius: 8px; background: #f6f8fb; border-bottom: 3px solid; padding: 4px; font-size: 9px; text-align: center; color: var(--sub); overflow: hidden; }
+  .case .items img { width: 100%; height: 34px; object-fit: contain; }
+  .rowset { display: flex; align-items: center; gap: 16px; margin: 14px 0; max-width: 560px; }
+  .rowset span { width: 200px; color: var(--sub); font-weight: 600; font-size: 14px; }
+  .rowset input[type=range] { flex: 1; accent-color: var(--acc); }
 
-  #pause { position: fixed; inset: 0; z-index: 20; background: #000a; display: flex; align-items: center; justify-content: center; }
-  #pause .box { width: min(420px, 92vw); background: #151922; border: 1px solid #2c3340; border-radius: 16px; padding: 26px; }
-  #pause .btn { width: 100%; margin-top: 10px; padding: 12px; font-size: 16px; font-weight: 700; border: 0; border-radius: 10px; cursor: pointer; background: #2a303c; color: #fff; }
-  #pause .btn.primary { background: #4ea1ff; }
-  .note { font-size: 12px; color: #8b93a3; margin-top: 6px; }
+  #opener { position: fixed; inset: 0; z-index: 30; background: rgba(20,24,32,0.72); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; }
+  #opener .win { width: min(980px, 94vw); background: #fff; border-radius: 18px; padding: 22px; display: flex; flex-direction: column; gap: 16px; align-items: center; }
+  .reelwrap { position: relative; width: 100%; height: 170px; overflow: hidden; border-radius: 12px; background: #f1f3f7; }
+  .reel { position: absolute; left: 0; top: 10px; display: flex; gap: 8px; will-change: transform; }
+  .reel .it { width: 150px; height: 150px; flex: none; background: #fff; border-radius: 10px; border-bottom: 5px solid; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 11px; text-align: center; padding: 6px; }
+  .reel .it img { width: 130px; height: 90px; object-fit: contain; }
+  .marker { position: absolute; left: 50%; top: 0; bottom: 0; width: 3px; background: var(--acc); transform: translateX(-50%); box-shadow: 0 0 12px var(--acc); z-index: 2; }
+  .result { text-align: center; }
+  .result img { width: 320px; height: 160px; object-fit: contain; }
+  .result b { display: block; font-size: 22px; margin-top: 6px; }
+
+  #pause { position: fixed; inset: 0; z-index: 20; background: rgba(20,24,32,0.5); display: flex; align-items: center; justify-content: center; }
+  #pause .panel { width: min(420px, 92vw); }
+  #toast { position: fixed; top: 74px; left: 50%; transform: translateX(-50%); z-index: 40; background: var(--ink); color: #fff; padding: 12px 20px; border-radius: 12px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
 </style>
 </head>
 <body>
+<canvas id="gl"></canvas>
+<canvas id="hud" class="hidden"></canvas>
+
 <div id="menu">
-  <div class="topbar">
-    <div class="logo"><span>STRIKE</span> 5<b>×</b>5 <small style="font-size:14px;color:#8b93a3;letter-spacing:1px">3D</small></div>
-    <div class="money">$ <span id="money">0</span></div>
-  </div>
+  <header>
+    <div class="logo disp">STRIKE <span>5×5</span></div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <div class="chip"><small>БАЛАНС</small><span class="money disp">$ <span id="money">0</span></span></div>
+    </div>
+  </header>
   <div class="main">
     <nav>
-      <button data-tab="play" class="active">▶&nbsp; Играть</button>
-      <button data-tab="arsenal">🔫&nbsp; Арсенал</button>
-      <button data-tab="skins">👤&nbsp; Скины</button>
-      <button data-tab="settings">⚙&nbsp; Настройки</button>
+      <button class="play disp" id="quick">В БОЙ<small>Быстрая игра · 5 на 5</small></button>
+      <button class="disp active" data-tab="play"><span class="n">01</span>ГЛАВНАЯ</button>
+      <button class="disp" data-tab="servers"><span class="n">02</span>СЕРВЕРЫ</button>
+      <button class="disp" data-tab="arsenal"><span class="n">03</span>АРСЕНАЛ</button>
+      <button class="disp" data-tab="cases"><span class="n">04</span>КЕЙСЫ</button>
+      <button class="disp" data-tab="inventory"><span class="n">05</span>ИНВЕНТАРЬ</button>
+      <button class="disp" data-tab="skins"><span class="n">06</span>ПЕРСОНАЖИ</button>
+      <button class="disp" data-tab="settings"><span class="n">07</span>НАСТРОЙКИ</button>
+      <button class="admin-link" data-tab="admin">Админ-панель</button>
     </nav>
-    <div class="tab" id="tab-play">
-      <div class="play-wrap">
-        <canvas id="preview" style="width:340px;height:340px"></canvas>
-        <div class="play-side">
-          <h2>Командный бой 5 на 5</h2>
-          <label class="lbl">Ник</label>
+
+    <section id="tab-play" style="flex:1;display:flex;min-width:0">
+      <div class="stage">
+        <div class="chip skinlabel"><div><small>ПЕРСОНАЖ</small><b id="skinName"></b><span id="skinNote"></span></div></div>
+        <canvas id="preview"></canvas>
+      </div>
+      <div class="side">
+        <div class="panel">
+          <div class="ptitle">ПРОФИЛЬ</div>
+          <label class="lbl" for="name">Позывной</label>
           <input type="text" id="name" maxlength="16" placeholder="Твой ник" autocomplete="off">
-          <label class="lbl">Основное оружие</label>
-          <select id="selPrimary"></select>
-          <label class="lbl">Пистолет</label>
-          <select id="selPistol"></select>
-          <button class="big" id="play">В БОЙ</button>
           <div id="status"></div>
-          <div class="help">
-            <kbd>WASD</kbd> движение · <kbd>Пробел</kbd> прыжок · <kbd>Мышь</kbd> обзор · <kbd>ЛКМ</kbd> огонь · <kbd>ПКМ</kbd> прицел<br>
-            <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> / колесо — оружие · <kbd>Q</kbd> прошлое оружие · <kbd>R</kbd> перезарядка<br>
-            <kbd>Tab</kbd> счёт · <kbd>Esc</kbd> пауза и смена оружия · <kbd>M</kbd> музыка<br>
-            Попадание в голову — ×4 урона. В дома можно заходить, ящики — запрыгивать.<br>
-            Убийства и победы приносят деньги: на них покупаешь оружие и скины.
-          </div>
+          <div class="help" style="margin-top:10px"><kbd>WASD</kbd> ходьба · <kbd>Пробел</kbd> прыжок · <kbd>ЛКМ</kbd> огонь · <kbd>ПКМ</kbd> прицел · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> оружие · <kbd>R</kbd> перезарядка · <kbd>Tab</kbd> счёт · <kbd>Esc</kbd> пауза · <kbd>M</kbd> музыка. Хедшот ×4.</div>
+        </div>
+        <div class="panel">
+          <div class="ptitle">СНАРЯЖЕНИЕ</div>
+          <div class="slot"><div><small>1 · Основное</small><select id="selPrimary"></select></div></div>
+          <div class="slot"><div><small>2 · Пистолет</small><select id="selPistol"></select></div></div>
+          <div class="slot"><div><small>3 · Нож</small><b id="knifeName">Нож</b></div><img id="knifeImg" alt=""></div>
+        </div>
+        <div class="panel">
+          <div class="ptitle">КАРТЫ</div>
+          <div class="maps" id="mapsRow"></div>
         </div>
       </div>
-    </div>
-    <div class="tab hidden" id="tab-arsenal">
-      <h2>Арсенал</h2>
-      <div class="chips" id="wcats"></div>
-      <div class="grid" id="wgrid"></div>
-    </div>
-    <div class="tab hidden" id="tab-skins">
-      <h2>Скины</h2>
-      <div class="note" style="margin:-8px 0 18px">Женские скины — самые дорогие: у них меньше хитбокс (тело и голова), в них труднее попасть.</div>
-      <div class="grid" id="sgrid"></div>
-    </div>
-    <div class="tab hidden" id="tab-settings">
-      <h2>Настройки</h2>
-      <div class="row"><span>Музыка</span><input type="range" id="volMusic" min="0" max="1" step="0.01"></div>
-      <div class="row"><span>Звуки</span><input type="range" id="volSfx" min="0" max="1" step="0.01"></div>
-      <div class="row"><span>Чувствительность мыши</span><input type="range" id="sens" min="0" max="1" step="0.01"></div>
-      <div class="row"><span>Графика</span><select id="quality" style="flex:1"><option value="high">Высокая (тени)</option><option value="low">Низкая (для слабых ПК)</option></select></div>
-      <div class="note">Деньги, купленное оружие и скины хранятся в этом браузере.</div>
-    </div>
+    </section>
+
+    <section id="tab-servers" class="big hidden">
+      <div class="panel">
+        <h2>Серверы</h2>
+        <div class="note">Выбери сервер или создай свой — друзья увидят его в этом списке.</div>
+        <div class="row2" style="margin-bottom:14px">
+          <div><label class="lbl">Название</label><input type="text" id="cName" maxlength="24" placeholder="Мой сервер"></div>
+          <div><label class="lbl">Пароль (необязательно)</label><input type="text" id="cPass" maxlength="16" placeholder="без пароля"></div>
+          <div><label class="lbl">Стартовая карта</label><select id="cMap"></select></div>
+          <div><label class="lbl">Боты</label><select id="cBots"><option value="1">Добирать ботами до 5×5</option><option value="0">Только люди</option></select></div>
+          <div style="flex:0 0 auto"><button class="btn acc" id="cGo">Создать и зайти</button></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b>Список серверов</b><button class="btn" id="refresh">Обновить</button></div>
+        <table><thead><tr><th>СЕРВЕР</th><th>КАРТА</th><th>ИГРОКИ</th><th>СЧЁТ</th><th></th></tr></thead><tbody id="rooms"></tbody></table>
+      </div>
+    </section>
+
+    <section id="tab-arsenal" class="big hidden"><div class="panel"><h2>Арсенал</h2><div class="note">Оружие покупается навсегда. Выбранное выдают при возрождении.</div><div class="chips" id="wcats"></div><div class="grid" id="wgrid"></div></div></section>
+    <section id="tab-cases" class="big hidden"><div class="panel"><h2>Кейсы</h2><div class="note">Синее — армейское, фиолетовое — запрещённое, розовое — засекреченное, красное — тайное, золото — нож.</div><div class="cases" id="caseList"></div></div></section>
+    <section id="tab-inventory" class="big hidden"><div class="panel"><h2>Инвентарь</h2><div class="note">Нажми на предмет, чтобы надеть раскраску. Нож из кейса заменяет обычный нож.</div><div class="grid" id="invGrid"></div></div></section>
+    <section id="tab-skins" class="big hidden"><div class="panel"><h2>Персонажи</h2><div class="note">Женские персонажи дороже — у них меньше хитбокс (тело и голова).</div><div class="grid" id="sgrid"></div></div></section>
+    <section id="tab-settings" class="big hidden"><div class="panel"><h2>Настройки</h2>
+      <div class="rowset"><span>Музыка</span><input type="range" id="volMusic" min="0" max="1" step="0.01"></div>
+      <div class="rowset"><span>Звуки</span><input type="range" id="volSfx" min="0" max="1" step="0.01"></div>
+      <div class="rowset"><span>Чувствительность мыши</span><input type="range" id="sens" min="0" max="1" step="0.01"></div>
+      <div class="rowset"><span>Поле зрения</span><input type="range" id="fov" min="65" max="100" step="1"></div>
+      <div class="rowset"><span>Графика</span><select id="quality" style="flex:1"><option value="high">Высокая — мягкие тени</option><option value="medium">Средняя — тени попроще</option><option value="low">Низкая — без теней, для слабых ПК</option></select></div>
+      <div class="note">Деньги, оружие, скины и кейсы хранятся в этом браузере.</div>
+    </div></section>
+    <section id="tab-admin" class="big hidden"><div class="panel">
+      <h2>Админ-панель</h2>
+      <div id="admLogin"><div class="note">Введи пароль администратора (переменная ADMIN_PASSWORD на сервере).</div>
+        <div class="row2"><div><input type="password" id="admPass" placeholder="Пароль"></div><div style="flex:0 0 auto"><button class="btn acc" id="admGo">Войти</button></div></div><div id="admErr" style="color:#e5484d;font-size:13px;margin-top:8px"></div></div>
+      <div id="admBody" class="hidden">
+        <div class="row2" style="margin-bottom:14px"><div><label class="lbl">Объявление всем игрокам</label><input type="text" id="admSay" maxlength="120" placeholder="Текст объявления"></div><div style="flex:0 0 auto"><button class="btn blue" id="admSayGo">Отправить</button></div></div>
+        <div class="row2" style="margin-bottom:14px">
+          <button class="btn" id="admMoney">+$10 000 себе</button>
+          <button class="btn" id="admUnlock">Открыть всё оружие и персонажей</button>
+          <button class="btn" id="admFree">Бесплатные кейсы: выкл</button>
+        </div>
+        <div id="admRooms"></div>
+      </div>
+    </div></section>
   </div>
 </div>
 
-<div id="pause" class="hidden">
-  <div class="box">
-    <h2 style="margin-bottom:6px">Пауза</h2>
-    <div class="note">Игра идёт дальше, тебя видно на карте. Esc — пауза, клик — вернуться в бой.</div>
-    <label class="lbl">Основное оружие</label>
-    <select id="pPrimary"></select>
-    <label class="lbl">Пистолет</label>
-    <select id="pPistol"></select>
-    <div class="note">Новое оружие выдадут при следующем возрождении.</div>
-    <button class="btn primary" id="resume">Продолжить</button>
-    <button class="btn" id="toMenu">Выйти в меню</button>
-  </div>
-</div>
+<div id="opener" class="hidden"><div class="win">
+  <h2 class="disp" id="opTitle" style="margin:0;font-size:30px"></h2>
+  <div class="reelwrap"><div class="marker"></div><div class="reel" id="reel"></div></div>
+  <div class="result hidden" id="opResult"></div>
+  <div style="display:flex;gap:10px"><button class="btn acc hidden" id="opAgain">Открыть ещё</button><button class="btn hidden" id="opClose">Забрать</button></div>
+</div></div>
 
-<canvas id="gl" class="hidden"></canvas>
-<canvas id="hud" class="hidden"></canvas>
+<div id="pause" class="hidden"><div class="panel">
+  <h2 class="disp" style="margin:0 0 4px;font-size:30px">ПАУЗА</h2>
+  <div class="help">Игра идёт дальше. Новое оружие выдадут при следующем возрождении.</div>
+  <label class="lbl">Основное оружие</label><select id="pPrimary"></select>
+  <label class="lbl">Пистолет</label><select id="pPistol"></select>
+  <div style="display:flex;gap:10px;margin-top:16px"><button class="btn acc" id="resume" style="flex:1">Продолжить</button><button class="btn" id="toMenu" style="flex:1">В меню</button></div>
+</div></div>
+<div id="toast" class="hidden"></div>
+
 <script type="importmap">{ "imports": { "three": "/three.module.js" } }</script>
 <script src="shared.js"></script>
-<script src="render.js"></script>
 <script src="audio.js"></script>
 <script type="module" src="game.js"></script>
 </body>
