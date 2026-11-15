@@ -25,7 +25,7 @@
   .money { font-size: 22px; color: #1f9d4c; }
   .main { flex: 1; display: flex; min-height: 0; gap: 0; padding: 0 36px 28px; }
   nav { width: 290px; display: flex; flex-direction: column; gap: 8px; padding-top: 10px; }
-  nav button { display: flex; align-items: center; gap: 14px; text-align: left; padding: 14px 18px; font-size: 22px; color: var(--ink); background: var(--panel); backdrop-filter: blur(10px); border: 1px solid #fff; border-radius: 12px; cursor: pointer; box-shadow: 0 4px 18px rgba(30,40,60,0.10); transition: transform .12s, box-shadow .12s; }
+  nav button { display: flex; align-items: center; gap: 14px; text-align: left; padding: 11px 18px; font-size: 21px; color: var(--ink); background: var(--panel); backdrop-filter: blur(10px); border: 1px solid #fff; border-radius: 12px; cursor: pointer; box-shadow: 0 4px 18px rgba(30,40,60,0.10); transition: transform .12s, box-shadow .12s; }
   nav button:hover { transform: translateX(4px); box-shadow: 0 8px 24px rgba(30,40,60,0.16); }
   nav button.active { box-shadow: inset 4px 0 0 var(--acc), 0 8px 24px rgba(30,40,60,0.16); }
   nav button .n { font-size: 14px; color: var(--sub); width: 20px; }
@@ -130,8 +130,9 @@
       <button class="disp" data-tab="arsenal"><span class="n">03</span>АРСЕНАЛ</button>
       <button class="disp" data-tab="cases"><span class="n">04</span>КЕЙСЫ</button>
       <button class="disp" data-tab="inventory"><span class="n">05</span>ИНВЕНТАРЬ</button>
-      <button class="disp" data-tab="skins"><span class="n">06</span>ПЕРСОНАЖИ</button>
-      <button class="disp" data-tab="settings"><span class="n">07</span>НАСТРОЙКИ</button>
+      <button class="disp" data-tab="market"><span class="n">06</span>ТОРГОВЛЯ</button>
+      <button class="disp" data-tab="skins"><span class="n">07</span>ПЕРСОНАЖИ</button>
+      <button class="disp" data-tab="settings"><span class="n">08</span>НАСТРОЙКИ</button>
       <button class="admin-link" data-tab="admin">Админ-панель</button>
     </nav>
 
@@ -146,7 +147,7 @@
           <label class="lbl" for="name">Позывной</label>
           <input type="text" id="name" maxlength="16" placeholder="Твой ник" autocomplete="off">
           <div id="status"></div>
-          <div class="help" style="margin-top:10px"><kbd>WASD</kbd> ходьба · <kbd>Пробел</kbd> прыжок · <kbd>ЛКМ</kbd> огонь · <kbd>ПКМ</kbd> прицел · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> оружие · <kbd>R</kbd> перезарядка · <kbd>Tab</kbd> счёт · <kbd>Esc</kbd> пауза · <kbd>M</kbd> музыка. Хедшот ×4.</div>
+          <div class="help" style="margin-top:10px"><kbd>WASD</kbd> ходьба · <kbd>Shift</kbd> тихий шаг · <kbd>Ctrl</kbd>/<kbd>C</kbd> присед · <kbd>Пробел</kbd> прыжок · <kbd>ЛКМ</kbd> огонь · <kbd>ПКМ</kbd> прицел / сильный удар ножом · <kbd>F</kbd> осмотр · <kbd>R</kbd> перезарядка · <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> оружие · <kbd>Tab</kbd> счёт · <kbd>Esc</kbd> пауза. Хедшот ×4, удар ножом в спину — смертельный.</div>
         </div>
         <div class="panel">
           <div class="ptitle">СНАРЯЖЕНИЕ</div>
@@ -180,6 +181,17 @@
     <section id="tab-arsenal" class="big hidden"><div class="panel"><h2>Арсенал</h2><div class="note">Оружие покупается навсегда. Выбранное выдают при возрождении.</div><div class="chips" id="wcats"></div><div class="grid" id="wgrid"></div></div></section>
     <section id="tab-cases" class="big hidden"><div class="panel"><h2>Кейсы</h2><div class="note">Синее — армейское, фиолетовое — запрещённое, розовое — засекреченное, красное — тайное, золото — нож.</div><div class="cases" id="caseList"></div></div></section>
     <section id="tab-inventory" class="big hidden"><div class="panel"><h2>Инвентарь</h2><div class="note">Нажми на предмет, чтобы надеть раскраску. Нож из кейса заменяет обычный нож.</div><div class="grid" id="invGrid"></div></div></section>
+    <section id="tab-market" class="big hidden"><div class="panel">
+      <h2>Торговая площадка</h2><div class="note">Продавай скины другим игрокам. Комиссия площадки — 5%. Деньги придут, даже если ты офлайн — при следующем входе.</div>
+      <div class="row2" style="margin-bottom:16px">
+        <div style="flex:2 1 260px"><label class="lbl">Предмет из инвентаря</label><select id="mkItem"></select></div>
+        <div><label class="lbl">Цена, $</label><input type="text" id="mkPrice" inputmode="numeric" placeholder="например 5000"></div>
+        <div style="flex:0 0 auto"><button class="btn acc" id="mkSell">Выставить</button></div>
+        <div style="flex:0 0 auto"><button class="btn" id="mkRefresh">Обновить</button></div>
+      </div>
+      <b>Мои лоты</b><div class="grid" id="mkMine" style="margin:8px 0 18px"></div>
+      <b>Все предложения</b><div class="grid" id="mkList" style="margin-top:8px"></div>
+    </div></section>
     <section id="tab-skins" class="big hidden"><div class="panel"><h2>Персонажи</h2><div class="note">Женские персонажи дороже — у них меньше хитбокс (тело и голова).</div><div class="grid" id="sgrid"></div></div></section>
     <section id="tab-settings" class="big hidden"><div class="panel"><h2>Настройки</h2>
       <div class="rowset"><span>Музыка</span><input type="range" id="volMusic" min="0" max="1" step="0.01"></div>

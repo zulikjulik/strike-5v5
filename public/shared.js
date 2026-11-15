@@ -3,7 +3,7 @@
 (function (root) {
   const C = {
     TILE: 48, TICK: 30, DT: 1 / 30,
-    SPEED: 125, R: 9, PH: 43, EYE: 38, JUMP_V: 250, G: 820,
+    SPEED: 125, R: 9, PH: 43, PHC: 30, EYE: 38, EYEC: 26, JUMP_V: 250, G: 820,
     FLOOR: 72, STEP: 8, RAMP_STEP: 16,
     HP: 100, RESPAWN_MS: 3000, SCORE_LIMIT: 50, MATCH_MS: 5 * 60 * 1000, INTERMISSION_MS: 9000, TEAM_SIZE: 5,
     START_MONEY: 3000, WIN_BONUS: 1500, LOSE_BONUS: 600, HEAD_MULT: 4,
@@ -49,7 +49,7 @@
           if (edge) set(x, y, [[0, 72, 'wall']], 'wall'); else set(x, y, [[64, 68, 'slab'], [68, 72, 'roof']], 'in');
         }
         for (const [x, y] of o.doors || []) { at(x, y).s = carve(at(x, y).s, 0, 53); at(x, y).kind = 'door'; trims.push([x, y, 53]); }
-        for (const [x, y] of o.wins || []) { at(x, y).s = carve(at(x, y).s, 22, 50); trims.push([x, y, 22]); }
+        for (const [x, y] of o.wins || []) { at(x, y).s = carve(at(x, y).s, 18, 58); trims.push([x, y, 18], [x, y, 58]); }
         if (o.chimney) chimneys.push([o.chimney[0], o.chimney[1], 72]);
       },
       // двухэтажный дом 7×5 с лестницей
@@ -61,14 +61,14 @@
           if (edge) {
             let s = [[0, 144, 'wall2']];
             const corner = (x === x0 || x === x1) && (y === y0 || y === y1);
-            if (!corner && (x + y) % 2 === 1) { s = carve(s, 94, 122); trims.push([x, y, 94]); }
+            if (!corner && (x + y) % 2 === 1) { s = carve(s, 90, 130); trims.push([x, y, 90], [x, y, 130]); }
             set(x, y, s, 'wall');
           } else set(x, y, [[64, 72, 'slab'], [136, 140, 'slab'], [140, 144, 'roof']], 'in');
         }
         // лестница: x0+2..x0+4 по ряду ry, вверх к +x, площадка x0+5
         for (let i = 0; i < 3; i++) { const c = at(x0 + 2 + i, ry); c.s = [[136, 140, 'slab'], [140, 144, 'roof']]; c.ramp = { dx: 1, dy: 0, z0: i * 24, z1: (i + 1) * 24 }; }
         for (const [x, y] of o.doors || []) { at(x, y).s = carve(at(x, y).s, 0, 53); at(x, y).kind = 'door'; trims.push([x, y, 53]); }
-        for (const [x, y] of o.wins || []) { at(x, y).s = carve(at(x, y).s, 22, 50); trims.push([x, y, 22]); }
+        for (const [x, y] of o.wins || []) { at(x, y).s = carve(at(x, y).s, 18, 58); trims.push([x, y, 18], [x, y, 58]); }
       },
       // грузовик-спавн: кабина (x..x+1, y), кузов (x..x+1, y+1..y+3)
       truck(x, y) {
@@ -91,7 +91,7 @@
       if (edge) {
         let s = [[0, 216, 'tower']];
         const corner = (x === x0 || x === x1) && (y === y0 || y === y1);
-        if (!corner && (x + y) % 2 === 0) { s = carve(s, 94, 122); s = carve(s, 166, 194); B.trims.push([x, y, 94], [x, y, 166]); }
+        if (!corner && (x + y) % 2 === 0) { s = carve(s, 90, 130); s = carve(s, 162, 202); B.trims.push([x, y, 90], [x, y, 130], [x, y, 162], [x, y, 202]); }
         c.s = s; c.kind = 'wall';
       } else { c.s = [[64, 72, 'slab'], [136, 144, 'slab'], [208, 212, 'slab'], [212, 216, 'roof']]; c.kind = 'in'; }
     }
@@ -99,8 +99,8 @@
     for (let i = 0; i < 3; i++) { const c = at(19, 13 - i); c.s = [[136, 144, 'slab'], [208, 212, 'slab'], [212, 216, 'roof']]; c.ramp = { dx: 0, dy: -1, z0: i * 24, z1: (i + 1) * 24 }; }
     // лестница 2→3: x=24, y=11..13, вверх к +y; площадка (24,14)
     for (let i = 0; i < 3; i++) { const c = at(24, 11 + i); c.s = [[64, 72, 'slab'], [208, 212, 'slab'], [212, 216, 'roof']]; c.ramp = { dx: 0, dy: 1, z0: 72 + i * 24, z1: 72 + (i + 1) * 24 }; }
-    for (const [x, y] of [[18, 12], [25, 12], [21, 9], [22, 9], [21, 15], [22, 15]]) { const c = at(x, y); c.s = carve([[0, 216, 'tower']], 0, 53); c.s = carve(c.s, 94, 122); c.s = carve(c.s, 166, 194); c.kind = 'door'; B.trims.push([x, y, 53]); }
-    for (const [x, y] of [[18, 10], [18, 14], [25, 10], [25, 14]]) { const c = at(x, y); c.s = carve(c.s, 22, 50); B.trims.push([x, y, 22]); }
+    for (const [x, y] of [[18, 10], [25, 14], [21, 9], [22, 9], [21, 15], [22, 15]]) { const c = at(x, y); c.s = carve([[0, 216, 'tower']], 0, 53); c.s = carve(c.s, 90, 130); c.s = carve(c.s, 162, 202); c.kind = 'door'; B.trims.push([x, y, 53]); }
+    for (const [x, y] of [[18, 12], [18, 14], [25, 10], [25, 12]]) { const c = at(x, y); c.s = carve(c.s, 18, 58); B.trims.push([x, y, 18], [x, y, 58]); }
     // площадка вокруг башни свободна
     for (let y = y0 - 1; y <= y1 + 1; y++) for (let x = x0 - 1; x <= x1 + 1; x++) if (x === x0 - 1 || x === x1 + 1 || y === y0 - 1 || y === y1 + 1) { const c = at(x, y); if (c.kind !== 'out') { c.s = []; c.kind = 'out'; c.ramp = null; } }
   }
@@ -219,11 +219,11 @@
     for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) if (fn(tx, ty) === true) return true;
     return false;
   }
-  function collides(map, x, y, r, z) {
+  function collides(map, x, y, r, z, ph = C.PH) {
     return tiles(x, y, r, (tx, ty) => {
       const c = colAt(map, tx, ty);
-      for (const s of c.s) if (s[1] > z + C.STEP && s[0] < z + C.PH) return true;
-      if (c.ramp && rampSurf(c, tx, ty, x, y) > z + C.RAMP_STEP && c.ramp.z0 < z + C.PH) return true;
+      for (const s of c.s) if (s[1] > z + C.STEP && s[0] < z + ph) return true;
+      if (c.ramp && rampSurf(c, tx, ty, x, y) > z + C.RAMP_STEP && c.ramp.z0 < z + ph) return true;
       return false;
     });
   }
@@ -236,26 +236,26 @@
     });
     return g;
   }
-  function ceilAt(map, x, y, r, z) {
+  function ceilAt(map, x, y, r, z, ph = C.PH) {
     let cz = Infinity;
-    tiles(x, y, r, (tx, ty) => { for (const s of colAt(map, tx, ty).s) if (s[0] >= z + C.PH - 1 && s[0] < cz) cz = s[0]; });
+    tiles(x, y, r, (tx, ty) => { for (const s of colAt(map, tx, ty).s) if (s[0] >= z + ph - 1 && s[0] < cz) cz = s[0]; });
     return cz;
   }
-  function move(map, x, y, dx, dy, r, z) {
+  function move(map, x, y, dx, dy, r, z, ph = C.PH) {
     const TL = C.TILE;
     if (dx) {
       let nx = x + dx;
-      if (collides(map, nx, y, r, z)) {
+      if (collides(map, nx, y, r, z, ph)) {
         nx = dx > 0 ? Math.floor((nx + r) / TL) * TL - r - 0.01 : (Math.floor((nx - r) / TL) + 1) * TL + r + 0.01;
-        if ((dx > 0 && nx < x) || (dx < 0 && nx > x) || collides(map, nx, y, r, z)) nx = x;
+        if ((dx > 0 && nx < x) || (dx < 0 && nx > x) || collides(map, nx, y, r, z, ph)) nx = x;
       }
       x = nx;
     }
     if (dy) {
       let ny = y + dy;
-      if (collides(map, x, ny, r, z)) {
+      if (collides(map, x, ny, r, z, ph)) {
         ny = dy > 0 ? Math.floor((ny + r) / TL) * TL - r - 0.01 : (Math.floor((ny - r) / TL) + 1) * TL + r + 0.01;
-        if ((dy > 0 && ny < y) || (dy < 0 && ny > y) || collides(map, x, ny, r, z)) ny = y;
+        if ((dy > 0 && ny < y) || (dy < 0 && ny > y) || collides(map, x, ny, r, z, ph)) ny = y;
       }
       y = ny;
     }
@@ -268,27 +268,43 @@
     const len = Math.hypot(f, s); f /= len; s /= len;
     return [Math.cos(yaw) * f + Math.cos(yaw + Math.PI / 2) * s, Math.sin(yaw) * f + Math.sin(yaw + Math.PI / 2) * s];
   }
-  // Шаг физики. st: {x,y,z,vz,og}. Возвращает true, если игрок шёл.
-  function step(map, st, k, yaw, jump, speed, dt) {
+  // Шаг физики с инерцией. st: {x,y,z,vx,vy,vz,og,cr}. fl: 1 прыжок, 2 присед, 4 тихий шаг.
+  // Возвращает скорость в долях от максимальной (0..1).
+  function step(map, st, k, yaw, fl, speed, dt) {
+    if (st.vx === undefined) { st.vx = 0; st.vy = 0; }
+    if (fl & 2) st.cr = true;
+    else if (st.cr && !collides(map, st.x, st.y, C.R, st.z, C.PH) && ceilAt(map, st.x, st.y, C.R, st.z, C.PHC) >= st.z + C.PH) st.cr = false;
+    const ph = st.cr ? C.PHC : C.PH;
+    const mul = st.cr ? 0.45 : (fl & 4) ? 0.52 : 1;
     const [mx, my] = moveDir(k, yaw);
-    let moved = false;
-    if (mx || my) { const ox = st.x, oy = st.y; const r = move(map, st.x, st.y, mx * speed * dt, my * speed * dt, C.R, st.z); st.x = r.x; st.y = r.y; moved = Math.abs(r.x - ox) + Math.abs(r.y - oy) > 0.01; st.blocked = !moved; } else st.blocked = false;
+    const ws = speed * mul, f = Math.min(1, (st.og ? 14 : 2.5) * dt);
+    st.vx += (mx * ws - st.vx) * f; st.vy += (my * ws - st.vy) * f;
+    if (!mx && !my && st.og && Math.hypot(st.vx, st.vy) < 4) { st.vx = 0; st.vy = 0; }
+    st.blocked = false;
+    if (st.vx || st.vy) {
+      const tx = st.x + st.vx * dt, ty = st.y + st.vy * dt;
+      const r = move(map, st.x, st.y, st.vx * dt, st.vy * dt, C.R, st.z, ph);
+      if (Math.abs(r.x - tx) > 0.01) st.vx = 0;
+      if (Math.abs(r.y - ty) > 0.01) st.vy = 0;
+      st.blocked = !!(mx || my) && Math.hypot(r.x - st.x, r.y - st.y) < 0.3;
+      st.x = r.x; st.y = r.y;
+    }
     const g = groundAt(map, st.x, st.y, C.R, st.z);
-    if (st.og && jump) { st.vz = C.JUMP_V; st.og = false; }
+    if (st.og && (fl & 1)) { st.vz = C.JUMP_V; st.og = false; }
     if (st.og) {
-      if (g > st.z) st.z = g; // подъём по лестнице
-      else if (st.z - g <= 6) st.z = g; // спуск по лестнице
+      if (g > st.z) st.z = g;
+      else if (st.z - g <= 6) st.z = g;
       else { st.og = false; st.vz = 0; }
     }
     if (!st.og) {
       st.vz -= C.G * dt;
       let nz = st.z + st.vz * dt;
-      if (st.vz > 0) { const cz = ceilAt(map, st.x, st.y, C.R, st.z); if (nz + C.PH > cz) { nz = cz - C.PH; st.vz = 0; } }
+      if (st.vz > 0) { const cz = ceilAt(map, st.x, st.y, C.R, st.z, ph); if (nz + ph > cz) { nz = cz - ph; st.vz = 0; } }
       const g2 = groundAt(map, st.x, st.y, C.R, Math.max(st.z, nz));
       if (nz <= g2) { nz = g2; st.vz = 0; st.og = true; }
       st.z = nz;
     }
-    return !!(mx || my);
+    return speed > 0 ? Math.min(1, Math.hypot(st.vx, st.vy) / speed) : 0;
   }
 
   // 3D-луч по карте: {t, n:[nx,ny,nz]} (n=null — улетело)
@@ -330,7 +346,7 @@
   // Попадание луча в игрока: тело — цилиндр, голова — сфера. q: {x,y,z}
   function hitPlayer(ox, oy, oz, dx, dy, dz, q, br, hr) {
     let best = Infinity, head = false;
-    const hx = q.x - ox, hy = q.y - oy, hz = q.z + 39 - oz;
+    const hx = q.x - ox, hy = q.y - oy, hz = q.z + (q.cr ? 27 : 39) - oz, top = q.cr ? 23 : 34;
     const pb = hx * dx + hy * dy + hz * dz;
     const d2 = hx * hx + hy * hy + hz * hz - pb * pb;
     if (pb > 0 && d2 < hr * hr) { best = pb - Math.sqrt(hr * hr - d2); head = true; }
@@ -343,8 +359,8 @@
         const sq = Math.sqrt(disc);
         const t0 = (-b - sq) / (2 * a), t1 = (-b + sq) / (2 * a);
         let z0 = -Infinity, z1 = Infinity;
-        if (Math.abs(dz) > 1e-6) { z0 = (q.z - oz) / dz; z1 = (q.z + 34 - oz) / dz; if (z0 > z1) [z0, z1] = [z1, z0]; }
-        else if (oz < q.z || oz > q.z + 34) z0 = Infinity;
+        if (Math.abs(dz) > 1e-6) { z0 = (q.z - oz) / dz; z1 = (q.z + top - oz) / dz; if (z0 > z1) [z0, z1] = [z1, z0]; }
+        else if (oz < q.z || oz > q.z + top) z0 = Infinity;
         const lo = Math.max(t0, z0, 0), hi = Math.min(t1, z1);
         if (lo <= hi && lo < best) { best = lo; head = false; }
       }
@@ -354,11 +370,11 @@
 
   // ---------- Оружие (арсенал CS 1.6) ----------
   // slot: 0 основное, 1 пистолет, 2 нож
-  const WDEF = { slot: 0, price: 0, dmg: 20, fire: 100, mag: 30, reload: 2500, spread: 0.035, mspread: 0.07, sspread: 0, speed: 0.95, auto: true, pellets: 1, range: 1600, scope: 0, pierce: false, reward: 300, recoil: 0.004 };
+  const WDEF = { sil: false, slot: 0, price: 0, dmg: 20, fire: 100, mag: 30, reload: 2500, spread: 0.035, mspread: 0.07, sspread: 0, speed: 0.95, auto: true, pellets: 1, range: 1600, scope: 0, pierce: false, reward: 300, recoil: 0.004 };
   const WLIST = [
-    { key: 'knife', name: 'Нож', cat: 'knife', slot: 2, dmg: 55, fire: 420, mag: 0, reload: 0, spread: 0, mspread: 0, speed: 1.06, range: 32, reward: 1500, recoil: 0 },
+    { key: 'knife', name: 'Нож', cat: 'knife', slot: 2, dmg: 40, heavy: 65, fire: 420, mag: 0, reload: 0, spread: 0, mspread: 0, speed: 1.06, range: 32, reward: 1500, recoil: 0 },
     { key: 'glock', name: 'Glock-18', cat: 'pistol', slot: 1, dmg: 18, fire: 140, mag: 20, reload: 2200, spread: 0.04, mspread: 0.06, speed: 1, auto: false, range: 1100, recoil: 0.006 },
-    { key: 'usp', name: 'USP', cat: 'pistol', slot: 1, dmg: 25, fire: 170, mag: 12, reload: 2400, spread: 0.03, mspread: 0.05, speed: 1, auto: false, range: 1200, recoil: 0.007 },
+    { key: 'usp', name: 'USP-S', sil: true, cat: 'pistol', slot: 1, dmg: 25, fire: 170, mag: 12, reload: 2400, spread: 0.03, mspread: 0.05, speed: 1, auto: false, range: 1200, recoil: 0.007 },
     { key: 'p228', name: 'P228', cat: 'pistol', slot: 1, price: 1200, dmg: 28, fire: 165, mag: 13, reload: 2500, spread: 0.03, mspread: 0.055, speed: 1, auto: false, range: 1200, recoil: 0.007 },
     { key: 'fiveseven', name: 'Five-SeveN', cat: 'pistol', slot: 1, price: 1500, dmg: 25, fire: 140, mag: 20, reload: 2800, spread: 0.028, mspread: 0.05, speed: 1, auto: false, range: 1200, recoil: 0.006 },
     { key: 'elite', name: 'Dual Berettas', cat: 'dual', slot: 1, price: 1600, dmg: 24, fire: 115, mag: 30, reload: 3800, spread: 0.05, mspread: 0.07, speed: 1, auto: false, range: 1100, recoil: 0.007 },
@@ -373,7 +389,7 @@
     { key: 'galil', name: 'Galil', cat: 'rifle', price: 4000, dmg: 23, fire: 95, mag: 35, reload: 2900, spread: 0.035, mspread: 0.08, speed: 0.9 },
     { key: 'famas', name: 'FAMAS', cat: 'rifle', price: 4500, dmg: 24, fire: 92, mag: 25, reload: 3300, spread: 0.03, mspread: 0.075, speed: 0.9 },
     { key: 'ak47', name: 'AK-47', cat: 'rifle', price: 5000, dmg: 33, fire: 100, mag: 30, reload: 2400, spread: 0.034, mspread: 0.1, speed: 0.88, recoil: 0.006 },
-    { key: 'm4a1', name: 'M4A1', cat: 'rifle', price: 6200, dmg: 28, fire: 92, mag: 30, reload: 3100, spread: 0.025, mspread: 0.075, speed: 0.9 },
+    { key: 'm4a1', name: 'M4A1-S', sil: true, cat: 'rifle', price: 6200, dmg: 28, fire: 92, mag: 30, reload: 3100, spread: 0.025, mspread: 0.075, speed: 0.9 },
     { key: 'sg552', name: 'SG 552', cat: 'rifle', price: 7000, dmg: 30, fire: 92, mag: 30, reload: 3000, spread: 0.026, mspread: 0.08, sspread: 0.012, scope: 1, speed: 0.86 },
     { key: 'aug', name: 'AUG', cat: 'rifle', price: 7000, dmg: 29, fire: 95, mag: 30, reload: 3300, spread: 0.024, mspread: 0.075, sspread: 0.01, scope: 1, speed: 0.87 },
     { key: 'scout', name: 'Scout', cat: 'sniper', price: 5500, dmg: 85, fire: 1250, mag: 10, reload: 2000, spread: 0.07, mspread: 0.12, sspread: 0.004, scope: 2, speed: 0.98, auto: false, range: 2200, recoil: 0 },
@@ -381,7 +397,7 @@
     { key: 'awp', name: 'AWP', cat: 'sniper', price: 15000, dmg: 150, fire: 1450, mag: 10, reload: 3000, spread: 0.13, mspread: 0.2, sspread: 0, scope: 2, speed: 0.82, auto: false, range: 2600, pierce: true, reward: 100, recoil: 0 },
   ];
   // точность +25%: разброс и отдача ×0.75
-  const WEAPONS = WLIST.map((w, i) => { const o = Object.assign({}, WDEF, w, { id: i }); o.spread *= 0.75; o.mspread *= 0.75; o.sspread *= 0.75; o.recoil *= 0.75; return o; });
+  const WEAPONS = WLIST.map((w, i) => { const o = Object.assign({}, WDEF, w, { id: i }); const k = 0.75 * 0.95; o.spread *= k; o.mspread *= k; o.sspread *= k; o.recoil *= k; return o; });
   const WKEY = {}; WEAPONS.forEach((w) => (WKEY[w.key] = w.id));
 
   // ---------- Скины ----------
@@ -425,9 +441,9 @@
     { w: 'deagle', name: 'Карбон', r: 3, case: 0, p: 'carbon', c: ['#1c1d21', '#34363c', '#d4af37'] },
     { w: 'awp', name: 'Изумрудный змей', r: 4, case: 0, p: 'neon', c: ['#0f2a1a', '#2bff88', '#ffd23f'] },
     { w: 'ak47', name: 'Огненный листопад', r: 4, case: 0, p: 'fade', c: ['#b3170e', '#ff6a00', '#ffe066'] },
-    { w: 'knife', model: 'karambit', name: 'Керамбит | Градиент', r: 5, case: 0, p: 'fade', c: ['#ff4fd8', '#7a5cff', '#ffd23f'] },
-    { w: 'knife', model: 'butterfly', name: 'Бабочка | Допплер', r: 5, case: 0, p: 'doppler', c: ['#ff2e7e', '#3a1c71', '#1fd1f9'] },
-    { w: 'knife', model: 'bayonet', name: 'Штык-нож | Золото', r: 5, case: 0, p: 'gold', c: ['#f6d365', '#b8860b', '#fff2b0'] },
+    { w: 'knife', model: 'karambit', name: 'Градиент', r: 5, case: 0, p: 'fade', c: ['#ff4fd8', '#7a5cff', '#ffd23f'] },
+    { w: 'knife', model: 'butterfly', name: 'Допплер', r: 5, case: 0, p: 'doppler', c: ['#ff2e7e', '#3a1c71', '#1fd1f9'] },
+    { w: 'knife', model: 'm9', name: 'Золото', r: 5, case: 0, p: 'gold', c: ['#f6d365', '#b8860b', '#fff2b0'] },
     // кейс «Метель»
     { w: 'scout', name: 'Снежный барс', r: 1, case: 1, p: 'snow', c: ['#e8eef2', '#9fb3c0', '#5f7280'] },
     { w: 'xm1014', name: 'Лёд', r: 1, case: 1, p: 'snow', c: ['#cfe8ff', '#7fb2e5', '#3a6ea5'] },
@@ -440,15 +456,70 @@
     { w: 'awp', name: 'Арктика', r: 3, case: 1, p: 'snow', c: ['#f5f8fa', '#1f6feb', '#9fb3c0'] },
     { w: 'ak47', name: 'Полярная ночь', r: 4, case: 1, p: 'neon', c: ['#0b1020', '#33e1ff', '#7c5cff'] },
     { w: 'deagle', name: 'Ледяной огонь', r: 4, case: 1, p: 'fade', c: ['#1fd1f9', '#ffffff', '#ff4f2e'] },
-    { w: 'knife', model: 'karambit', name: 'Керамбит | Лёд', r: 5, case: 1, p: 'doppler', c: ['#1fd1f9', '#0b3d91', '#e0f7ff'] },
-    { w: 'knife', model: 'butterfly', name: 'Бабочка | Градиент', r: 5, case: 1, p: 'fade', c: ['#ffd23f', '#ff3d8b', '#7c5cff'] },
-    { w: 'knife', model: 'bayonet', name: 'Штык-нож | Тёмная сталь', r: 5, case: 1, p: 'carbon', c: ['#16171a', '#2e3036', '#ff3d2e'] },
+    { w: 'knife', model: 'karambit', name: 'Лёд', r: 5, case: 1, p: 'doppler', c: ['#1fd1f9', '#0b3d91', '#e0f7ff'] },
+    { w: 'knife', model: 'butterfly', name: 'Градиент', r: 5, case: 1, p: 'fade', c: ['#ffd23f', '#ff3d8b', '#7c5cff'] },
+    { w: 'knife', model: 'm9', name: 'Тёмная сталь', r: 5, case: 1, p: 'carbon', c: ['#16171a', '#2e3036', '#ff3d2e'] },
+    // кейс «Дракон»
+    { w: 'mp5', name: 'Пепел', r: 1, case: 2, p: 'marble', c: ['#3a3a3a', '#8a8a8a', '#c7c7c7'] },
+    { w: 'galil', name: 'Уголь', r: 1, case: 2, p: 'lava', c: ['#1a1a1a', '#ff5a1f', '#3a1a10'] },
+    { w: 'sg552', name: 'Жар', r: 1, case: 2, p: 'fade', c: ['#ff9f1c', '#ff3d2e', '#3a0f0f'] },
+    { w: 'mac10', name: 'Чешуя', r: 1, case: 2, p: 'dragon', c: ['#2e7d32', '#a5d6a7', '#0b3d0b'] },
+    { w: 'glock', name: 'Красный дракон', r: 2, case: 2, p: 'dragon', c: ['#b71c1c', '#ffca28', '#3e0000'] },
+    { w: 'p90', name: 'Магма', r: 2, case: 2, p: 'lava', c: ['#1b0a05', '#ff6d00', '#ffd54f'] },
+    { w: 'famas', name: 'Коготь', r: 2, case: 2, p: 'geo', c: ['#f5f5f5', '#ff5722', '#212121'] },
+    { w: 'deagle', name: 'Пламя дракона', r: 3, case: 2, p: 'dragon', c: ['#ff6f00', '#ffd600', '#4e0000'] },
+    { w: 'usp', name: 'Киберпанк', r: 3, case: 2, p: 'circuit', c: ['#0d0221', '#ff00e5', '#00f0ff'] },
+    { w: 'awp', name: 'Огненный дракон', r: 4, case: 2, p: 'dragon', c: ['#d50000', '#ffab00', '#1a0000'] },
+    { w: 'ak47', name: 'Вулкан', r: 4, case: 2, p: 'lava', c: ['#120804', '#ff3d00', '#ffea00'] },
+    { w: 'knife', model: 'katana', name: 'Дракон', r: 5, case: 2, p: 'dragon', c: ['#c62828', '#ffc107', '#1a0000'] },
+    { w: 'knife', model: 'machete', name: 'Лава', r: 5, case: 2, p: 'lava', c: ['#120804', '#ff3d00', '#ffea00'] },
+    { w: 'knife', model: 'm9', name: 'Пламя', r: 5, case: 2, p: 'fade', c: ['#ff1744', '#ff9100', '#ffea00'] },
+    { w: 'knife', model: 'karambit', name: 'Мрамор', r: 5, case: 2, p: 'marble', c: ['#ff4081', '#3d5afe', '#f5f5f5'] },
+    // кейс «Галактика»
+    { w: 'fiveseven', name: 'Комета', r: 1, case: 3, p: 'galaxy', c: ['#0d1b2a', '#4fc3f7', '#e1f5fe'] },
+    { w: 'ump45', name: 'Орбита', r: 1, case: 3, p: 'hex', c: ['#1a237e', '#3949ab', '#9fa8da'] },
+    { w: 'xm1014', name: 'Метеорит', r: 1, case: 3, p: 'marble', c: ['#263238', '#78909c', '#ffab40'] },
+    { w: 'tmp', name: 'Луна', r: 1, case: 3, p: 'snow', c: ['#cfd8dc', '#90a4ae', '#eceff1'] },
+    { w: 'm4a1', name: 'Звёздная пыль', r: 2, case: 3, p: 'galaxy', c: ['#1a0033', '#b388ff', '#ffffff'] },
+    { w: 'aug', name: 'Квазар', r: 2, case: 3, p: 'fade', c: ['#00e5ff', '#651fff', '#f50057'] },
+    { w: 'p228', name: 'Спутник', r: 2, case: 3, p: 'chrome', c: ['#eceff1', '#90a4ae', '#ffffff'] },
+    { w: 'awp', name: 'Туманность', r: 3, case: 3, p: 'galaxy', c: ['#1a0033', '#ff4081', '#7c4dff'] },
+    { w: 'm249', name: 'Чёрная дыра', r: 3, case: 3, p: 'galaxy', c: ['#000000', '#6200ea', '#ff6d00'] },
+    { w: 'ak47', name: 'Галактика', r: 4, case: 3, p: 'galaxy', c: ['#0b0033', '#ff1744', '#00e5ff'] },
+    { w: 'deagle', name: 'Сверхновая', r: 4, case: 3, p: 'fade', c: ['#ffffff', '#ffd600', '#ff3d00'] },
+    { w: 'knife', model: 'butterfly', name: 'Галактика', r: 5, case: 3, p: 'galaxy', c: ['#0b0033', '#ff1744', '#00e5ff'] },
+    { w: 'knife', model: 'bear', name: 'Туманность', r: 5, case: 3, p: 'galaxy', c: ['#1a0033', '#e040fb', '#40c4ff'] },
+    { w: 'knife', model: 'flip', name: 'Космос', r: 5, case: 3, p: 'galaxy', c: ['#000814', '#00b4d8', '#ffffff'] },
+    { w: 'knife', model: 'katana', name: 'Звёзды', r: 5, case: 3, p: 'galaxy', c: ['#03045e', '#ffd60a', '#ffffff'] },
+    // кейс «Кибер»
+    { w: 'mac10', name: 'Синтвейв', r: 1, case: 4, p: 'fade', c: ['#ff00e5', '#7c4dff', '#00e5ff'] },
+    { w: 'xm1014', name: 'Код', r: 1, case: 4, p: 'circuit', c: ['#001b0a', '#00ff66', '#003314'] },
+    { w: 'scout', name: 'Пиксель-арт', r: 1, case: 4, p: 'hex', c: ['#ff4081', '#ffd740', '#40c4ff'] },
+    { w: 'elite', name: 'Неон', r: 1, case: 4, p: 'neon', c: ['#0a0a12', '#00e5ff', '#ff4081'] },
+    { w: 'glock', name: 'Глитч', r: 2, case: 4, p: 'comic', c: ['#00e5ff', '#ff1744', '#ffea00'] },
+    { w: 'p90', name: 'Азимут', r: 2, case: 4, p: 'geo', c: ['#fafafa', '#ff6d00', '#212121'] },
+    { w: 'm249', name: 'Схема', r: 2, case: 4, p: 'circuit', c: ['#0d1117', '#58a6ff', '#1f6feb'] },
+    { w: 'usp', name: 'Хром', r: 3, case: 4, p: 'chrome', c: ['#f5f5f5', '#9e9e9e', '#ffffff'] },
+    { w: 'awp', name: 'Матрица', r: 3, case: 4, p: 'circuit', c: ['#000000', '#00ff41', '#003b00'] },
+    { w: 'ak47', name: 'Неоновая революция', r: 4, case: 4, p: 'comic', c: ['#ff1744', '#00e5ff', '#ffea00'] },
+    { w: 'm4a1', name: 'Рассвет-7', r: 4, case: 4, p: 'geo', c: ['#f5f5f5', '#ff6d00', '#212121'] },
+    { w: 'knife', model: 'karambit', name: 'Хром', r: 5, case: 4, p: 'chrome', c: ['#f5f5f5', '#9e9e9e', '#ffffff'] },
+    { w: 'knife', model: 'm9', name: 'Неон', r: 5, case: 4, p: 'neon', c: ['#05050f', '#00e5ff', '#ff00e5'] },
+    { w: 'knife', model: 'bear', name: 'Кибер', r: 5, case: 4, p: 'circuit', c: ['#020617', '#22d3ee', '#a855f7'] },
+    { w: 'knife', model: 'machete', name: 'Глитч', r: 5, case: 4, p: 'comic', c: ['#00e5ff', '#ff1744', '#ffea00'] },
+    { w: 'knife', model: 'flip', name: 'Синтвейв', r: 5, case: 4, p: 'fade', c: ['#ff00e5', '#7c4dff', '#00e5ff'] },
+    { w: 'knife', model: 'butterfly', name: 'Хром', r: 5, case: 4, p: 'chrome', c: ['#f5f5f5', '#9e9e9e', '#ffffff'] },
   ];
   const FINISHES = FLIST.map((f, i) => Object.assign({ id: i, model: null }, f));
   const CASES = [
     { key: 'leaf', name: 'Кейс «Листопад»', price: 2000, color: '#e0761e' },
     { key: 'blizzard', name: 'Кейс «Метель»', price: 3500, color: '#3a8bd8' },
+    { key: 'dragon', name: 'Кейс «Дракон»', price: 5000, color: '#c0392b' },
+    { key: 'galaxy', name: 'Кейс «Галактика»', price: 6000, color: '#5e35b1' },
+    { key: 'cyber', name: 'Кейс «Кибер»', price: 7500, color: '#00acc1' },
   ];
+  const KNIVES = { default: 'Нож', m9: 'Штык-нож M9', butterfly: 'Нож-бабочка', flip: 'Складной нож', bear: 'Медвежий нож', machete: 'Мачете', katana: 'Катана', karambit: 'Керамбит' };
+  function itemName(f) { return f.w === 'knife' ? `★ ${KNIVES[f.model] || 'Нож'} | ${f.name}` : `${(WEAPONS[WKEY[f.w]] || {}).name} | ${f.name}`; }
   function rollCase(ci, rnd) {
     const items = FINISHES.filter((f) => f.case === ci);
     let x = (rnd || Math.random)(), tier = 1;
@@ -467,7 +538,7 @@
   function dirFrom(yaw, pitch) { const cp = Math.cos(pitch); return [Math.cos(yaw) * cp, Math.sin(yaw) * cp, Math.sin(pitch)]; }
   const MAPS = DEFS.map(buildMap);
 
-  const api = { C, MAPS, WEAPONS, WKEY, SKINS, SKEY, FINISHES, CASES, RARITY, rollCase, finishFits, colAt, walkable, isWall, collides, groundAt, ceilAt, move, moveDir, step, ray3, hitPlayer, rampSurf, speedOf, dirFrom };
+  const api = { C, MAPS, WEAPONS, WKEY, SKINS, SKEY, FINISHES, CASES, RARITY, KNIVES, itemName, rollCase, finishFits, colAt, walkable, isWall, collides, groundAt, ceilAt, move, moveDir, step, ray3, hitPlayer, rampSurf, speedOf, dirFrom };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Shared = api;
 })(this);

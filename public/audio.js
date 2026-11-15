@@ -17,8 +17,12 @@
     mg: { crack: 3000, body: 1000, q: 0.7, dur: 0.16, thump: 110, td: 0.1, gain: 0.6, tail: 0.28 },
     scout: { crack: 4200, body: 1300, q: 0.6, dur: 0.32, thump: 90, td: 0.2, gain: 0.8, tail: 0.5 },
     awp: { crack: 5000, body: 750, q: 0.5, dur: 0.65, thump: 52, td: 0.38, gain: 1.0, tail: 0.7 },
+    sil: { crack: 6000, body: 1600, q: 1.2, dur: 0.07, thump: 220, td: 0.04, gain: 0.28, tail: 0.04 },
+    silr: { crack: 5000, body: 1300, q: 1.0, dur: 0.09, thump: 180, td: 0.05, gain: 0.32, tail: 0.05 },
   };
   function profFor(w) {
+    if (w.key === 'usp') return PROF.sil;
+    if (w.key === 'm4a1') return PROF.silr;
     if (w.key === 'deagle') return PROF.deagle;
     if (w.key === 'ak47' || w.key === 'galil') return PROF.ak;
     if (w.key === 'awp') return PROF.awp;
@@ -64,7 +68,7 @@
     const w = WEAPONS[wid]; if (!w) return;
     if (w.cat === 'knife') return whoosh(distPx, pan);
     const P = profFor(w);
-    const k = Math.max(0, 1 - distPx / 2000);
+    const k = Math.max(0, 1 - distPx / (w.sil ? 900 : 2000));
     const v = P.gain * Math.pow(k, 1.4);
     if (v < 0.01) return;
     const t = ctx.currentTime + 0.005;
@@ -86,15 +90,16 @@
     o.frequency.setValueAtTime(P.thump * 1.8 * det, t); o.frequency.exponentialRampToValueAtTime(P.thump * 0.45, t + P.td);
     const g3 = ctx.createGain(); env(g3, t, 1.1, 0.002, P.td); o.connect(g3); g3.connect(out);
     o.start(t); o.stop(t + P.td + 0.05);
+    if (w.sil) { const n4 = noise(t, 0.12), hp4 = ctx.createBiquadFilter(); hp4.type = 'highpass'; hp4.frequency.value = 3000; const g4 = ctx.createGain(); env(g4, t, 0.35, 0.002, 0.1); n4.connect(hp4); hp4.connect(g4); g4.connect(out); click(2600, 0.25 * v, 0.03); }
     active++; setTimeout(() => active--, (P.dur + 0.1) * 1000);
   }
 
-  function whoosh(distPx, pan) {
-    const k = Math.max(0, 1 - distPx / 900); if (k <= 0) return;
+  function whoosh(distPx, pan, heavy) {
+    const k = Math.max(0, 1 - distPx / 900); if (k <= 0 || !ctx) return;
     const t = ctx.currentTime;
     const n = noise(t, 0.2), bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 2;
-    bp.frequency.setValueAtTime(500, t); bp.frequency.exponentialRampToValueAtTime(3000, t + 0.16);
-    const g = ctx.createGain(); env(g, t, 0.35 * k, 0.04, 0.15); n.connect(bp); bp.connect(g); g.connect(sfxBus);
+    bp.frequency.setValueAtTime(heavy ? 300 : 500, t); bp.frequency.exponentialRampToValueAtTime(heavy ? 1800 : 3000, t + (heavy ? 0.28 : 0.16));
+    const g = ctx.createGain(); env(g, t, (heavy ? 0.5 : 0.35) * k, 0.04, heavy ? 0.26 : 0.15); n.connect(bp); bp.connect(g); g.connect(sfxBus);
   }
 
   function click(freq, gain, delay) {
@@ -117,6 +122,10 @@
   const deploy = () => click(2000, 0.3);
   const buy = () => { tone(660, 0.15, 0.08); tone(990, 0.15, 0.15, 0.06); click(3000, 0.3, 0.02); };
   const uiClick = () => click(2500, 0.2);
+  const step3 = (distPx, pan, k) => { if (!ctx) return; const a = Math.max(0, 1 - distPx / 700); if (a <= 0) return; const t = ctx.currentTime; const n = noise(t, 0.06), lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 650; const g = ctx.createGain(); env(g, t, 0.22 * a * a * (k || 1), 0.003, 0.06); const pn = ctx.createStereoPanner ? ctx.createStereoPanner() : null; n.connect(lp); lp.connect(g); if (pn) { pn.pan.value = Math.max(-1, Math.min(1, pan)); g.connect(pn); pn.connect(sfxBus); } else g.connect(sfxBus); };
+  const bolt = () => { click(1800, 0.35); click(2600, 0.35, 0.14); click(1200, 0.3, 0.3); };
+  const inspect = () => { click(1500, 0.15); click(900, 0.12, 0.25); };
+  const flick = () => { click(3500, 0.25); click(4200, 0.2, 0.06); };
   const step = (k) => { if (!ctx) return; const t = ctx.currentTime; const n = noise(t, 0.05), lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 500; const g = ctx.createGain(); env(g, t, 0.12 * k, 0.003, 0.05); n.connect(lp); lp.connect(g); g.connect(sfxBus); };
 
   // ---------- Музыка: лёгкий синтвейв-эмбиент, 4 аккорда, процедурно ----------
@@ -178,7 +187,7 @@
   }
 
   window.Sfx = {
-    init, shot, reloadStart, reloadEnd, dry, hit, killDing, deploy, buy, uiClick, step,
+    init, shot, whoosh, step3, bolt, inspect, flick, reloadStart, reloadEnd, dry, hit, killDing, deploy, buy, uiClick, step,
     setVolume(kind, v) { vol[kind] = v; if (!ctx) return; if (kind === 'sfx') sfxBus.gain.value = v; else applyMusicVol(); },
     setInGame(v) { inGame = v; applyMusicVol(); },
     toggleMusic() { musicOn = !musicOn; applyMusicVol(); return musicOn; },
