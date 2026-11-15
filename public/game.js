@@ -14,7 +14,7 @@ function rr(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w
 // Сохранение (в браузере игрока)
 // =====================================================================
 const SAVE_KEY = 'strike5v5_save';
-function defSave() { return { money: C.START_MONEY, ownedW: ['knife', 'glock', 'usp'], ownedS: ['recruit'], primary: null, pistol: 'usp', skin: 'recruit', nick: '', music: 0.4, sfx: 0.8, sens: 0.5, fov: 80, quality: 'medium', inv: {}, eq: {}, freeCases: false, adminPass: '', uid: '' }; }
+function defSave() { return { money: C.START_MONEY, ownedW: ['knife', 'glock', 'usp'], ownedS: ['recruit'], primary: null, pistol: 'usp', skin: 'recruit', nick: '', music: 0.4, sfx: 0.8, sens: 0.5, fov: 80, quality: 'medium', inv: {}, eq: {}, freeCases: false, adminPass: '', uid: '', fullscreen: true }; }
 let save = defSave();
 try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); if (s) save = Object.assign(defSave(), s); } catch {}
 if (!['high', 'medium', 'low'].includes(save.quality)) save.quality = 'medium';
@@ -171,7 +171,8 @@ $('name').value = save.nick;
 $('name').oninput = () => { save.nick = $('name').value; persist(); };
 moneyUI();
 for (const [id, k] of [['volMusic', 'music'], ['volSfx', 'sfx'], ['sens', 'sens'], ['fov', 'fov']]) $(id).value = save[k];
-$('quality').value = save.quality;
+$('quality').value = save.quality; $('fsOn').checked = save.fullscreen !== false;
+$('fsOn').onchange = (e) => { save.fullscreen = e.target.checked; persist(); };
 Sfx.setVolume('music', save.music); Sfx.setVolume('sfx', save.sfx);
 $('volMusic').oninput = (e) => { save.music = +e.target.value; Sfx.setVolume('music', save.music); persist(); };
 $('volSfx').oninput = (e) => { save.sfx = +e.target.value; Sfx.setVolume('sfx', save.sfx); persist(); };
@@ -197,14 +198,14 @@ $('mapsRow').innerHTML = MAPS.map((m) => { const th = THEMES[m.theme]; const hex
 $('cMap').innerHTML = MAPS.map((m, i) => `<option value="${i}">${m.name}</option>`).join('');
 $('refresh').onclick = () => { Sfx.uiClick(); send({ t: 'rooms' }); };
 function profile() { save.nick = $('name').value.trim() || save.nick; persist(); return { name: save.nick || 'Игрок', skin: SKEY[save.skin] ?? 0, lo: loadout(), fin: finMap() }; }
-$('quick').onclick = () => { Sfx.init(); $('status').textContent = 'Подключение…'; send(Object.assign({ t: 'quick' }, profile())); };
-$('cGo').onclick = () => { Sfx.uiClick(); send(Object.assign({ t: 'create', room_name: $('cName').value.trim() || `Сервер ${save.nick || 'игрока'}`, pass: $('cPass').value.trim(), map: +$('cMap').value, bots: $('cBots').value === '1' }, profile())); };
+$('quick').onclick = () => { Sfx.init(); enterFullscreen(); $('status').textContent = 'Подключение…'; send(Object.assign({ t: 'quick' }, profile())); };
+$('cGo').onclick = () => { Sfx.uiClick(); enterFullscreen(); send(Object.assign({ t: 'create', room_name: $('cName').value.trim() || `Сервер ${save.nick || 'игрока'}`, pass: $('cPass').value.trim(), map: +$('cMap').value, bots: $('cBots').value === '1' }, profile())); };
 function renderRooms(list) {
   const tb = $('rooms');
   if (!list.length) { tb.innerHTML = '<tr><td colspan="5" style="color:#5d6676">Пока нет серверов. Создай свой или нажми «В БОЙ».</td></tr>'; return; }
   tb.innerHTML = list.map((r) => `<tr><td><b>${esc(r.name)}</b>${r.locked ? ' 🔒' : ''}${r.official ? ' <span class="tag">быстрая</span>' : ''}${r.bots ? '' : ' <span class="tag">без ботов</span>'}</td><td>${MAPS[r.map]?.name || ''}</td><td>${r.players} / ${r.max}</td><td>${r.score[0]} : ${r.score[1]}</td>
     <td style="text-align:right">${r.locked ? `<input type="password" placeholder="пароль" data-pass="${r.id}" style="width:110px;padding:7px 9px;font-size:13px;margin-right:6px">` : ''}<button class="btn acc" data-join="${r.id}" ${r.players >= r.max ? 'disabled' : ''}>Зайти</button></td></tr>`).join('');
-  tb.querySelectorAll('[data-join]').forEach((b) => b.onclick = () => { const id = +b.dataset.join; const pi = tb.querySelector(`[data-pass="${id}"]`); send(Object.assign({ t: 'join', room: id, pass: pi ? pi.value : '' }, profile())); });
+  tb.querySelectorAll('[data-join]').forEach((b) => b.onclick = () => { enterFullscreen(); const id = +b.dataset.join; const pi = tb.querySelector(`[data-pass="${id}"]`); send(Object.assign({ t: 'join', room: id, pass: pi ? pi.value : '' }, profile())); });
 }
 
 // ----- арсенал -----
@@ -471,8 +472,8 @@ function showMenu() {
   fillSelects(); moneyUI(); openTab(curTab); if (document.pointerLockElement) document.exitPointerLock();
   vm.visible = false; for (const o of others.values()) scene.remove(o.model); others.clear(); tracers = []; smokes = [];
 }
-$('resume').onclick = () => { paused = false; $('pause').classList.add('hidden'); lockPointer(); };
-$('toMenu').onclick = () => { joined = false; send({ t: 'leave' }); showMenu(); };
+$('resume').onclick = () => { paused = false; $('pause').classList.add('hidden'); enterFullscreen(); lockPointer(); };
+$('toMenu').onclick = () => { joined = false; send({ t: 'leave' }); showMenu(); leaveFullscreen(); };
 
 const curWid = () => { const w = me.wpn[me.slot]; return w != null && w >= 0 ? w : WKEY.knife; };
 const curW = () => WEAPONS[curWid()];
@@ -554,12 +555,30 @@ function ownMuzzleWorld() { _v.set(0.12, -0.09, -0.6).applyQuaternion(camera.qua
 const KEYMAP = { KeyW: 1, ArrowUp: 1, KeyS: 2, ArrowDown: 2, KeyA: 4, ArrowLeft: 4, KeyD: 8, ArrowRight: 8 };
 const keys = {}; let mouseDown = false, rmbDown = false, clickLatch = false, edgeAt = 0, reloadReq = false, jumpLatch = false, showBoard = false, paused = false, locked = false;
 let swayX = 0, swayY = 0;
+// Полный экран + Keyboard Lock: только так браузер отдаёт игре Ctrl+W, Ctrl+S и т.п.
+const LOCK_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyF', 'KeyC', 'KeyT', 'KeyN', 'Tab', 'Space', 'ControlLeft', 'ControlRight', 'ShiftLeft', 'Digit1', 'Digit2', 'Digit3'];
+let keysLocked = false;
+function enterFullscreen() {
+  if (!save.fullscreen || document.fullscreenElement || !document.documentElement.requestFullscreen) { lockKeys(); return; }
+  document.documentElement.requestFullscreen({ navigationUI: 'hide' }).then(lockKeys).catch(() => {});
+}
+function lockKeys() {
+  if (!document.fullscreenElement || !navigator.keyboard || !navigator.keyboard.lock) return;
+  navigator.keyboard.lock(LOCK_KEYS).then(() => { keysLocked = true; }).catch(() => { keysLocked = false; });
+}
+function leaveFullscreen() {
+  try { if (navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock(); } catch {}
+  keysLocked = false;
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+}
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) keysLocked = false; else lockKeys(); });
+let ctrlWarnAt = 0;
 function lockPointer() { try { const p = glc.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch {} }
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === glc;
   if (!locked && joined && !paused) { paused = true; mouseDown = false; $('pause').classList.remove('hidden'); fillSelects(); }
 });
-glc.addEventListener('click', () => { if (joined && !locked && !paused) lockPointer(); });
+glc.addEventListener('click', () => { if (joined && !locked && !paused) { enterFullscreen(); lockPointer(); } });
 function selectSlot(s) {
   if (s === me.slot) return;
   const w = me.wpn[s]; if (w == null || w < 0) return;
@@ -578,11 +597,12 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyM') Sfx.toggleMusic();
   if (e.code === 'KeyF') startInspect();
   if (e.code === 'ControlLeft' || e.code === 'ControlRight' || e.code === 'ShiftLeft') e.preventDefault();
+  if ((e.code === 'ControlLeft' || e.code === 'ControlRight') && !keysLocked) ctrlWarnAt = performance.now();
   keys[e.code] = true;
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; if (e.code === 'Tab') { e.preventDefault(); showBoard = false; } });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouseDown = false; rmbDown = false; });
-addEventListener('beforeunload', (e) => { if (joined) { e.preventDefault(); e.returnValue = ''; } });
+addEventListener('beforeunload', (e) => { if (joined && !keysLocked) { e.preventDefault(); e.returnValue = ''; } });
 addEventListener('mousemove', (e) => {
   if (!joined || paused || !locked) return;
   const zoomK = camera.fov / save.fov, k = 0.0007 + save.sens * 0.0042;
@@ -993,6 +1013,10 @@ function drawHUD(now, plist) {
     h.fillStyle = '#e8ecf2'; h.fillText('Следующая карта: ' + MAPS[(worldIdx + 1) % MAPS.length].name + ' через ' + Math.ceil(m.tl / 1000) + ' с', W / 2, H / 2 - 76);
     drawBoard(H / 2 - 56);
   } else if (showBoard) drawBoard(90);
+  if (!keysLocked && now - ctrlWarnAt < 4000) {
+    h.textAlign = 'center'; h.font = '600 14px Inter, system-ui'; const t = 'Не в полноэкранном режиме Ctrl+W закроет вкладку. Приседай на C или кликни по экрану — игра развернётся.';
+    const tw = h.measureText(t).width; h.fillStyle = 'rgba(160,30,30,0.85)'; h.fillRect(W / 2 - tw / 2 - 14, 72, tw + 28, 30); h.fillStyle = '#fff'; h.fillText(t, W / 2, 92);
+  }
   if (!locked && !paused && joined) {
     h.fillStyle = 'rgba(0,0,0,0.5)'; h.fillRect(0, H / 2 + 60, W, 44);
     h.textAlign = 'center'; h.fillStyle = '#fff'; h.font = 'bold 16px Inter, system-ui'; h.fillText('Кликни по экрану, чтобы управлять мышью', W / 2, H / 2 + 88);

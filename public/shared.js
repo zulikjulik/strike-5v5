@@ -397,7 +397,7 @@
     { key: 'awp', name: 'AWP', cat: 'sniper', price: 15000, dmg: 150, fire: 1450, mag: 10, reload: 3000, spread: 0.13, mspread: 0.2, sspread: 0, scope: 2, speed: 0.82, auto: false, range: 2600, pierce: true, reward: 100, recoil: 0 },
   ];
   // точность +25%: разброс и отдача ×0.75
-  const WEAPONS = WLIST.map((w, i) => { const o = Object.assign({}, WDEF, w, { id: i }); const k = 0.75 * 0.95; o.spread *= k; o.mspread *= k; o.sspread *= k; o.recoil *= k; return o; });
+  const WEAPONS = WLIST.map((w, i) => { const o = Object.assign({}, WDEF, w, { id: i }); const k = 0.75 * 0.95 * 1.1; o.spread *= k; o.mspread *= k; o.sspread *= k; o.recoil *= k; return o; });
   const WKEY = {}; WEAPONS.forEach((w) => (WKEY[w.key] = w.id));
 
   // ---------- Скины ----------
