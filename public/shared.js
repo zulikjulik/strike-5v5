@@ -1,119 +1,110 @@
-// Общий код для сервера и клиента: карты, константы, коллизии, лучи.
+// Общий код для сервера и клиента (3D-версия): карты, физика, лучи, оружие, скины.
+// Единицы — «пиксели» сервера: 1 клетка = 48 = 2 метра, 24 = 1 метр. Ось z — высота.
 (function (root) {
   const C = {
-    TILE: 48,
-    TICK: 30,
-    DT: 1 / 30,
-    SPEED: 230,
-    R: 14,
-    HP: 100,
-    FIRE_MS: 110,
-    DMG: 22,
-    MAG: 30,
-    RELOAD_MS: 1800,
-    SPREAD: 0.03,
-    BOT_SPREAD: 0.075,
-    RANGE: 1600,
-    RESPAWN_MS: 3000,
-    SCORE_LIMIT: 50,
-    MATCH_MS: 5 * 60 * 1000,
-    INTERMISSION_MS: 8000,
-    TEAM_SIZE: 5,
-    START_MONEY: 3000,
-    WIN_BONUS: 1500,
-    LOSE_BONUS: 600,
+    TILE: 48, TICK: 30, DT: 1 / 30,
+    SPEED: 125, R: 9, PH: 43, EYE: 38, JUMP_V: 245, G: 820,
+    WALL_H: 72,
+    HP: 100, RESPAWN_MS: 3000, SCORE_LIMIT: 50, MATCH_MS: 5 * 60 * 1000, INTERMISSION_MS: 8000, TEAM_SIZE: 5,
+    START_MONEY: 3000, WIN_BONUS: 1500, LOSE_BONUS: 600,
+    HEAD_MULT: 4,
   };
+  // Типы клеток
+  const T = { OUT: 0, WALL: 1, IN: 2, DOOR: 3, WIN: 4, CRATE: 5, TALL: 6 };
+  // Твёрдые диапазоны высот по типам [низ, верх]
+  const SOLID = {
+    0: [], 1: [[0, 72]], 2: [[72, 90]], 3: [[53, 90]], 4: [[0, 22], [50, 90]], 5: [[0, 26]], 6: [[0, 52]],
+  };
+  const CRATE_TOP = 26;
+  const CH = { '#': T.WALL, '.': T.OUT, 'A': T.OUT, ',': T.IN, 'D': T.DOOR, 'w': T.WIN, 'c': T.CRATE, 'C': T.TALL };
 
-  // Левая половина карты (20 символов). Правая — зеркало, A -> B.
-  // '#' стена, '.' пол, 'A' спавн команды A.
+  // Левая половина (20 символов), правая — зеркало, A -> B.
+  // # стена, . улица, , пол в доме (с крышей), D дверь, w окно, c ящик (можно запрыгнуть), C высокий ящик
   const DEFS = [
     {
-      name: 'Склад',
-      theme: { floor: '#3a3e44', floor2: '#363a40', wall: '#7a6548', wallTop: '#9b8360', bg: '#1d1f23' },
+      name: 'Деревня', theme: 'village',
       half: [
         '####################',
         '#AA.................',
-        '#AA.....##..........',
-        '#AA.....##.....##...',
-        '#.......##.....##...',
-        '#...................',
-        '####...........#####',
-        '#......####.........',
-        '#......#............',
-        '#..##..#.....##.....',
-        '#..##........##.....',
-        '#.............#.....',
-        '#....######...#.....',
-        '#.............#.....',
-        '#..##........##.....',
-        '#..##..#.....##.....',
-        '#......#............',
-        '#......####.........',
-        '####...........#####',
-        '#...................',
-        '#.......##.....##...',
-        '#AA.....##.....##...',
-        '#AA.................',
+        '#AA..#####w####.....',
+        '#AA..#,,,,,,,,#..c..',
+        '#....w,,,,,,,,D..c..',
+        '#....#,,,,,,,,#.....',
+        '#....###D######.....',
+        '#.c.................',
+        '#.cc.........#ww####',
+        '#............#,,,,,,',
+        '#..#w#D##....D,,,,,,',
+        '#..#,,,,#....#,,,,,,',
+        '#..w,,,,w....w,,,,,,',
+        '#..#,,,,#....#,,,,,,',
+        '#..##D###....D,,,,,,',
+        '#............#,,,,,,',
+        '#..c.........#ww####',
+        '#.cC................',
+        '#....###D######.....',
+        '#....#,,,,,,,,#..c..',
+        '#AA..w,,,,,,,,D..cC.',
+        '#AA..#,,,,,,,,#.....',
+        '#AA.......c.........',
         '####################',
       ],
     },
     {
-      name: 'Пустыня',
-      theme: { floor: '#c9a96e', floor2: '#c2a267', wall: '#8a6a3c', wallTop: '#a8834d', bg: '#3b2e1c' },
+      name: 'Пустыня', theme: 'desert',
       half: [
         '####################',
         '#AAA......#.........',
-        '#AAA......#.........',
-        '#.........#....#####',
-        '#..####...#.........',
-        '#..#................',
-        '#..#.......####.....',
-        '#..........#........',
-        '#......#...#........',
-        '######.#...#...##...',
-        '#......#.......##...',
-        '#..............##...',
-        '#...####............',
-        '#...#...............',
-        '#...#.....#####.....',
-        '#.........#.........',
-        '#.........#.........',
-        '######....#...#.....',
-        '#.............#.....',
-        '#..####.......#.....',
-        '#.....#.......####..',
-        '#AAA..#.............',
-        '#AAA..#.............',
+        '#AAA......#..####D##',
+        '#.........#..#,,,,,,',
+        '#..#####..#..w,,,,,,',
+        '#..#,,,D.....#,,,,,,',
+        '#..#,,,#.....###w###',
+        '#..##w##............',
+        '#...........c.......',
+        '######..C...cc....##',
+        '#.........#.......#,',
+        '#.........#.......D,',
+        '#...####..#.......#,',
+        '#...#,,w..####....#,',
+        '#...D,,#..........##',
+        '#...####......c.....',
+        '#.............cC....',
+        '######..#####.......',
+        '#.......#,,,#..####.',
+        '#.......D,,,w..#,,D.',
+        '#..cc...#,,,#..#,,#.',
+        '#AAA....##D##..####.',
+        '#AAA................',
         '####################',
       ],
     },
     {
-      name: 'Город',
-      theme: { floor: '#4a4f57', floor2: '#454a52', wall: '#2b2f36', wallTop: '#5b6270', bg: '#15171b' },
+      name: 'Город', theme: 'city',
       half: [
         '####################',
         '#AA.................',
-        '#AA..####..####..###',
-        '#....####..####..#..',
-        '#....####..####.....',
+        '#AA.####w####..#####',
+        '#...#,,,,,,,#..#,,,,',
+        '#...w,,,,,,,D..D,,,,',
+        '#...#,,,,,,,#..#,,,,',
+        '#...###D#####..##w##',
         '#...................',
-        '#..####..#####..##..',
-        '#..####..#####..##..',
-        '#..####.........##..',
-        '#........##.........',
-        '####.....##..####...',
-        '#..............#....',
-        '#..##..####....#....',
-        '#..##..####.........',
-        '#..........######...',
-        '####................',
-        '#.....###.......#...',
-        '#.....###..###..#...',
-        '#..........###......',
-        '#..####.........##..',
-        '#..####..####...##..',
-        '#AA......####.......',
-        '#AA.................',
+        '#..c.....C..........',
+        '####..#w##D#..c.....',
+        '#.....#,,,,#........',
+        '#.....w,,,,#..######',
+        '#.....#,,,,D..D,,,,,',
+        '#.....######..#,,,,,',
+        '#.............#,,,,,',
+        '#..cC.........###w##',
+        '#...................',
+        '#...#####D###...c...',
+        '#...#,,,,,,,#...cc..',
+        '#...w,,,,,,,w.......',
+        '#...#,,,,,,,#..#####',
+        '#AA.#####D###..D,,,,',
+        '#AA............#,,,,',
         '####################',
       ],
     },
@@ -122,100 +113,152 @@
   function buildMap(def) {
     const rows = def.half.map((h) => {
       h = h.padEnd(20, '.').slice(0, 20);
-      const mirror = h.split('').reverse().map((c) => (c === 'A' ? 'B' : c)).join('');
-      return h + mirror;
+      return h + h.split('').reverse().map((c) => (c === 'A' ? 'B' : c)).join('');
     });
     const H = rows.length, W = rows[0].length;
     const grid = new Uint8Array(W * H);
     const spawns = { A: [], B: [] };
     const floor = [];
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        let c = rows[y][x];
-        if (x === 0 || y === 0 || x === W - 1 || y === H - 1) c = '#';
-        grid[y * W + x] = c === '#' ? 1 : 0;
-        if (c === 'A' || c === 'B') spawns[c].push([x, y]);
-        if (c !== '#') floor.push([x, y]);
-      }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      let c = rows[y][x];
+      if (x === 0 || y === 0 || x === W - 1 || y === H - 1) c = '#';
+      const t = CH[c] ?? T.OUT;
+      grid[y * W + x] = t;
+      if (c === 'A' || c === 'B') spawns[c].push([x, y]);
+      if (t === T.OUT || t === T.IN || t === T.DOOR) floor.push([x, y]);
     }
     return { name: def.name, theme: def.theme, W, H, grid, spawns, floor, pw: W * C.TILE, ph: H * C.TILE };
   }
-
   const MAPS = DEFS.map(buildMap);
 
-  function isWall(map, tx, ty) {
-    if (tx < 0 || ty < 0 || tx >= map.W || ty >= map.H) return true;
-    return map.grid[ty * map.W + tx] === 1;
-  }
+  function tileAt(map, tx, ty) { if (tx < 0 || ty < 0 || tx >= map.W || ty >= map.H) return T.WALL; return map.grid[ty * map.W + tx]; }
+  // Для ботов и путей: проходима ли клетка пешком
+  function walkable(t) { return t === T.OUT || t === T.IN || t === T.DOOR; }
+  function isWall(map, tx, ty) { return !walkable(tileAt(map, tx, ty)); }
 
-  function collides(map, x, y, r) {
-    const T = C.TILE;
-    const x0 = Math.floor((x - r) / T), x1 = Math.floor((x + r) / T);
-    const y0 = Math.floor((y - r) / T), y1 = Math.floor((y + r) / T);
-    for (let ty = y0; ty <= y1; ty++)
-      for (let tx = x0; tx <= x1; tx++) if (isWall(map, tx, ty)) return true;
+  function blocksBody(t, z) {
+    if (t === T.WALL || t === T.WIN || t === T.TALL) return true;
+    if (t === T.CRATE) return z < CRATE_TOP - 4;
     return false;
   }
-
-  // Движение квадратного коллайдера по осям раздельно.
-  function move(map, x, y, dx, dy, r) {
-    const T = C.TILE;
+  function collides(map, x, y, r, z) {
+    const TL = C.TILE;
+    const x0 = Math.floor((x - r) / TL), x1 = Math.floor((x + r) / TL);
+    const y0 = Math.floor((y - r) / TL), y1 = Math.floor((y + r) / TL);
+    for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) if (blocksBody(tileAt(map, tx, ty), z)) return true;
+    return false;
+  }
+  function groundAt(map, x, y, r, z) {
+    const TL = C.TILE;
+    const x0 = Math.floor((x - r) / TL), x1 = Math.floor((x + r) / TL);
+    const y0 = Math.floor((y - r) / TL), y1 = Math.floor((y + r) / TL);
+    let g = 0;
+    for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) if (tileAt(map, tx, ty) === T.CRATE && z >= CRATE_TOP - 4) g = CRATE_TOP;
+    return g;
+  }
+  function move(map, x, y, dx, dy, r, z) {
+    const TL = C.TILE;
     if (dx) {
       let nx = x + dx;
-      if (collides(map, nx, y, r)) {
-        if (dx > 0) nx = Math.floor((nx + r) / T) * T - r - 0.01;
-        else nx = (Math.floor((nx - r) / T) + 1) * T + r + 0.01;
-        if (collides(map, nx, y, r)) nx = x;
+      if (collides(map, nx, y, r, z)) {
+        if (dx > 0) nx = Math.floor((nx + r) / TL) * TL - r - 0.01; else nx = (Math.floor((nx - r) / TL) + 1) * TL + r + 0.01;
+        if (collides(map, nx, y, r, z)) nx = x;
       }
       x = nx;
     }
     if (dy) {
       let ny = y + dy;
-      if (collides(map, x, ny, r)) {
-        if (dy > 0) ny = Math.floor((ny + r) / T) * T - r - 0.01;
-        else ny = (Math.floor((ny - r) / T) + 1) * T + r + 0.01;
-        if (collides(map, x, ny, r)) ny = y;
+      if (collides(map, x, ny, r, z)) {
+        if (dy > 0) ny = Math.floor((ny + r) / TL) * TL - r - 0.01; else ny = (Math.floor((ny - r) / TL) + 1) * TL + r + 0.01;
+        if (collides(map, x, ny, r, z)) ny = y;
       }
       y = ny;
     }
     return { x, y };
   }
 
-  // Луч до стены (DDA). Возвращает дистанцию.
-  function rayWall(map, x, y, a, max) {
-    const T = C.TILE;
-    const dx = Math.cos(a), dy = Math.sin(a);
-    let tx = Math.floor(x / T), ty = Math.floor(y / T);
-    const stepX = dx > 0 ? 1 : -1, stepY = dy > 0 ? 1 : -1;
-    const tDX = dx !== 0 ? Math.abs(T / dx) : Infinity;
-    const tDY = dy !== 0 ? Math.abs(T / dy) : Infinity;
-    let tMX = dx > 0 ? ((tx + 1) * T - x) / dx : dx < 0 ? (x - tx * T) / -dx : Infinity;
-    let tMY = dy > 0 ? ((ty + 1) * T - y) / dy : dy < 0 ? (y - ty * T) / -dy : Infinity;
-    let t = 0;
-    for (let i = 0; i < 400 && t < max; i++) {
-      if (tMX < tMY) { t = tMX; tMX += tDX; tx += stepX; }
-      else { t = tMY; tMY += tDY; ty += stepY; }
-      if (isWall(map, tx, ty)) return Math.min(t, max);
-    }
-    return max;
+  // Направление движения из клавиш (1=W 2=S 4=A 8=D) относительно взгляда yaw
+  function moveDir(k, yaw) {
+    let f = 0, s = 0;
+    if (k & 1) f += 1; if (k & 2) f -= 1; if (k & 8) s += 1; if (k & 4) s -= 1;
+    if (!f && !s) return [0, 0];
+    const len = Math.hypot(f, s); f /= len; s /= len;
+    return [Math.cos(yaw) * f + Math.cos(yaw + Math.PI / 2) * s, Math.sin(yaw) * f + Math.sin(yaw + Math.PI / 2) * s];
   }
 
-  // Вектор движения из битовой маски клавиш: 1=W 2=S 4=A 8=D
-  function keyDir(k) {
-    let mx = 0, my = 0;
-    if (k & 1) my -= 1;
-    if (k & 2) my += 1;
-    if (k & 4) mx -= 1;
-    if (k & 8) mx += 1;
-    if (mx && my) { mx *= Math.SQRT1_2; my *= Math.SQRT1_2; }
-    return [mx, my];
+  // Один шаг физики игрока. st: {x,y,z,vz,og}
+  function step(map, st, k, yaw, jump, speed, dt) {
+    const [mx, my] = moveDir(k, yaw);
+    if (mx || my) { const r = move(map, st.x, st.y, mx * speed * dt, my * speed * dt, C.R, st.z); st.x = r.x; st.y = r.y; }
+    const g = groundAt(map, st.x, st.y, C.R, st.z);
+    if (st.og && jump) { st.vz = C.JUMP_V; st.og = false; }
+    if (!st.og || st.z > g) {
+      st.vz -= C.G * dt; st.z += st.vz * dt;
+      if (st.z <= g) { st.z = g; st.vz = 0; st.og = true; } else st.og = false;
+    }
+    return !!(mx || my);
+  }
+
+  // 3D-луч по карте. Возвращает {t, n:[nx,ny,nz]} (нормаль поверхности) или t=max.
+  function ray3(map, ox, oy, oz, dx, dy, dz, max) {
+    const TL = C.TILE;
+    let tx = Math.floor(ox / TL), ty = Math.floor(oy / TL);
+    const sX = dx > 0 ? 1 : -1, sY = dy > 0 ? 1 : -1;
+    const tDX = dx !== 0 ? Math.abs(TL / dx) : Infinity, tDY = dy !== 0 ? Math.abs(TL / dy) : Infinity;
+    let tMX = dx > 0 ? ((tx + 1) * TL - ox) / dx : dx < 0 ? (ox - tx * TL) / -dx : Infinity;
+    let tMY = dy > 0 ? ((ty + 1) * TL - oy) / dy : dy < 0 ? (oy - ty * TL) / -dy : Infinity;
+    let tIn = 0, side = [0, 0, 0];
+    for (let i = 0; i < 300 && tIn < max; i++) {
+      const tOut = Math.min(tMX, tMY, max);
+      const t = tileAt(map, tx, ty);
+      const zA = oz + dz * tIn, zB = oz + dz * tOut;
+      let best = Infinity, n = null;
+      for (const [z0, z1] of SOLID[t]) {
+        if (zA >= z0 && zA <= z1) { if (tIn < best) { best = tIn; n = side; } }
+        else if (zA > z1 && zB < z1) { const tt = tIn + ((zA - z1) / (zA - zB)) * (tOut - tIn); if (tt < best) { best = tt; n = [0, 0, 1]; } }
+        else if (zA < z0 && zB > z0) { const tt = tIn + ((z0 - zA) / (zB - zA)) * (tOut - tIn); if (tt < best) { best = tt; n = [0, 0, -1]; } }
+      }
+      if (zB < 0 && dz < 0) { const tt = -oz / dz; if (tt < best) { best = tt; n = [0, 0, 1]; } }
+      if (best < Infinity) return { t: best, n };
+      if (tOut >= max) break;
+      if (tMX < tMY) { tIn = tMX; tMX += tDX; tx += sX; side = [-sX, 0, 0]; }
+      else { tIn = tMY; tMY += tDY; ty += sY; side = [0, -sY, 0]; }
+    }
+    return { t: max, n: null };
+  }
+
+  // Попадание луча в игрока: тело — вертикальный цилиндр, голова — сфера
+  function hitPlayer(ox, oy, oz, dx, dy, dz, q, br, hr) {
+    let best = Infinity, head = false;
+    // голова
+    const hx = q.x - ox, hy = q.y - oy, hz = q.z + 39 - oz;
+    const pb = hx * dx + hy * dy + hz * dz;
+    const d2 = hx * hx + hy * hy + hz * hz - pb * pb;
+    if (pb > 0 && d2 < hr * hr) { best = pb - Math.sqrt(hr * hr - d2); head = true; }
+    // тело
+    const a = dx * dx + dy * dy;
+    if (a > 1e-6) {
+      const fx = ox - q.x, fy = oy - q.y;
+      const b = 2 * (fx * dx + fy * dy), c = fx * fx + fy * fy - br * br;
+      const disc = b * b - 4 * a * c;
+      if (disc > 0) {
+        const sq = Math.sqrt(disc);
+        let t0 = (-b - sq) / (2 * a), t1 = (-b + sq) / (2 * a);
+        let z0 = -Infinity, z1 = Infinity;
+        if (Math.abs(dz) > 1e-6) { z0 = (q.z - oz) / dz; z1 = (q.z + 34 - oz) / dz; if (z0 > z1) [z0, z1] = [z1, z0]; }
+        else if (oz < q.z || oz > q.z + 34) { z0 = Infinity; }
+        const lo = Math.max(t0, z0, 0), hi = Math.min(t1, z1);
+        if (lo <= hi && lo < best) { best = lo; head = false; }
+      }
+    }
+    return best < Infinity ? { t: best, head } : null;
   }
 
   // ---------- Оружие (арсенал CS 1.6) ----------
   // slot: 0 основное, 1 пистолет, 2 нож
   const WDEF = { slot: 0, price: 0, dmg: 20, fire: 100, mag: 30, reload: 2500, spread: 0.035, mspread: 0.07, sspread: 0, speed: 0.95, auto: true, pellets: 1, range: 1600, scope: 0, pierce: false, reward: 300, recoil: 0.004 };
   const WLIST = [
-    { key: 'knife', name: 'Нож', cat: 'knife', slot: 2, dmg: 55, fire: 420, mag: 0, reload: 0, spread: 0, mspread: 0, speed: 1.06, range: 50, reward: 1500, recoil: 0 },
+    { key: 'knife', name: 'Нож', cat: 'knife', slot: 2, dmg: 55, fire: 420, mag: 0, reload: 0, spread: 0, mspread: 0, speed: 1.06, range: 32, reward: 1500, recoil: 0 },
     { key: 'glock', name: 'Glock-18', cat: 'pistol', slot: 1, dmg: 18, fire: 140, mag: 20, reload: 2200, spread: 0.04, mspread: 0.06, speed: 1, auto: false, range: 1100, recoil: 0.006 },
     { key: 'usp', name: 'USP', cat: 'pistol', slot: 1, dmg: 25, fire: 170, mag: 12, reload: 2400, spread: 0.03, mspread: 0.05, speed: 1, auto: false, range: 1200, recoil: 0.007 },
     { key: 'p228', name: 'P228', cat: 'pistol', slot: 1, price: 1200, dmg: 28, fire: 165, mag: 13, reload: 2500, spread: 0.03, mspread: 0.055, speed: 1, auto: false, range: 1200, recoil: 0.007 },
@@ -255,15 +298,16 @@
     { key: 'lisa', name: 'Агент Лиза', price: 16000, female: true, shirt: '#263238', vest: '#3b4b53', boots: '#111', skin: '#f2c8a4', hair: '#f0cf6a', hat: 'none', trail: '#f48fb1' },
     { key: 'eva', name: 'Снайпер Ева', price: 20000, female: true, shirt: '#4e5d3a', vest: '#33402a', boots: '#2a2a20', skin: '#e3b28c', hair: '#7b3f1d', hat: 'none', trail: '#a5d6a7' },
     { key: 'valkyrie', name: 'Валькирия', price: 25000, female: true, shirt: '#7a1f2b', vest: '#3a0f15', boots: '#1a0a0c', skin: '#f5d2b5', hair: '#ececec', hat: 'none', trail: '#ff8a80' },
-  ].map((s, i) => Object.assign({ id: i, female: false, hitR: s.female ? 12 : 16 }, s));
+  ].map((s, i) => Object.assign({ id: i, female: false, hitR: s.female ? 7.5 : 10, headR: s.female ? 4.8 : 5.5 }, s));
   const SKEY = {}; SKINS.forEach((s) => (SKEY[s.key] = s.id));
 
   function speedOf(wid, scoped) {
     const w = WEAPONS[wid] || WEAPONS[0];
     return C.SPEED * w.speed * (scoped && w.scope ? 0.6 : 1);
   }
+  function dirFrom(yaw, pitch) { const cp = Math.cos(pitch); return [Math.cos(yaw) * cp, Math.sin(yaw) * cp, Math.sin(pitch)]; }
 
-  const api = { C, MAPS, WEAPONS, WKEY, SKINS, SKEY, isWall, collides, move, rayWall, keyDir, speedOf };
+  const api = { C, T, SOLID, CRATE_TOP, MAPS, WEAPONS, WKEY, SKINS, SKEY, tileAt, walkable, isWall, collides, groundAt, move, moveDir, step, ray3, hitPlayer, speedOf, dirFrom };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Shared = api;
 })(this);

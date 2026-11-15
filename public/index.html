@@ -3,11 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Strike 5×5</title>
+<title>Strike 5×5 — 3D</title>
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0c0e12; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #e8ebf0; user-select: none; }
-  canvas#c { display: block; cursor: none; }
+  canvas#gl, canvas#hud { position: fixed; inset: 0; display: block; }
+  canvas#hud { pointer-events: none; }
+  .card img { width: 100%; height: 150px; object-fit: contain; background: radial-gradient(circle at 50% 60%, #ffffff0c, transparent 70%); border-radius: 10px; }
   .hidden { display: none !important; }
   button { font-family: inherit; }
 
@@ -71,7 +73,7 @@
 <body>
 <div id="menu">
   <div class="topbar">
-    <div class="logo"><span>STRIKE</span> 5<b>×</b>5</div>
+    <div class="logo"><span>STRIKE</span> 5<b>×</b>5 <small style="font-size:14px;color:#8b93a3;letter-spacing:1px">3D</small></div>
     <div class="money">$ <span id="money">0</span></div>
   </div>
   <div class="main">
@@ -83,7 +85,7 @@
     </nav>
     <div class="tab" id="tab-play">
       <div class="play-wrap">
-        <canvas id="preview" width="680" height="680"></canvas>
+        <canvas id="preview" style="width:340px;height:340px"></canvas>
         <div class="play-side">
           <h2>Командный бой 5 на 5</h2>
           <label class="lbl">Ник</label>
@@ -95,9 +97,10 @@
           <button class="big" id="play">В БОЙ</button>
           <div id="status"></div>
           <div class="help">
-            <kbd>WASD</kbd> движение · <kbd>Мышь</kbd> прицел · <kbd>ЛКМ</kbd> огонь · <kbd>ПКМ</kbd> прицел снайперки<br>
+            <kbd>WASD</kbd> движение · <kbd>Пробел</kbd> прыжок · <kbd>Мышь</kbd> обзор · <kbd>ЛКМ</kbd> огонь · <kbd>ПКМ</kbd> прицел<br>
             <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> / колесо — оружие · <kbd>Q</kbd> прошлое оружие · <kbd>R</kbd> перезарядка<br>
             <kbd>Tab</kbd> счёт · <kbd>Esc</kbd> пауза и смена оружия · <kbd>M</kbd> музыка<br>
+            Попадание в голову — ×4 урона. В дома можно заходить, ящики — запрыгивать.<br>
             Убийства и победы приносят деньги: на них покупаешь оружие и скины.
           </div>
         </div>
@@ -110,13 +113,15 @@
     </div>
     <div class="tab hidden" id="tab-skins">
       <h2>Скины</h2>
-      <div class="note" style="margin:-8px 0 18px">Женские скины — самые дорогие: у них меньше хитбокс, в них труднее попасть.</div>
+      <div class="note" style="margin:-8px 0 18px">Женские скины — самые дорогие: у них меньше хитбокс (тело и голова), в них труднее попасть.</div>
       <div class="grid" id="sgrid"></div>
     </div>
     <div class="tab hidden" id="tab-settings">
       <h2>Настройки</h2>
       <div class="row"><span>Музыка</span><input type="range" id="volMusic" min="0" max="1" step="0.01"></div>
       <div class="row"><span>Звуки</span><input type="range" id="volSfx" min="0" max="1" step="0.01"></div>
+      <div class="row"><span>Чувствительность мыши</span><input type="range" id="sens" min="0" max="1" step="0.01"></div>
+      <div class="row"><span>Графика</span><select id="quality" style="flex:1"><option value="high">Высокая (тени)</option><option value="low">Низкая (для слабых ПК)</option></select></div>
       <div class="note">Деньги, купленное оружие и скины хранятся в этом браузере.</div>
     </div>
   </div>
@@ -125,7 +130,7 @@
 <div id="pause" class="hidden">
   <div class="box">
     <h2 style="margin-bottom:6px">Пауза</h2>
-    <div class="note">Игра идёт дальше, тебя видно на карте.</div>
+    <div class="note">Игра идёт дальше, тебя видно на карте. Esc — пауза, клик — вернуться в бой.</div>
     <label class="lbl">Основное оружие</label>
     <select id="pPrimary"></select>
     <label class="lbl">Пистолет</label>
@@ -136,10 +141,12 @@
   </div>
 </div>
 
-<canvas id="c" class="hidden"></canvas>
+<canvas id="gl" class="hidden"></canvas>
+<canvas id="hud" class="hidden"></canvas>
+<script type="importmap">{ "imports": { "three": "/three.module.js" } }</script>
 <script src="shared.js"></script>
 <script src="render.js"></script>
 <script src="audio.js"></script>
-<script src="game.js"></script>
+<script type="module" src="game.js"></script>
 </body>
 </html>
