@@ -56,6 +56,19 @@ function botLoadout() {
   return [p, pist[Math.floor(Math.random() * pist.length)].id, KNIFE];
 }
 
+// ---------------- Торговая площадка (хранится в data/market.json) ----------------
+const DATA_DIR = path.join(__dirname, 'data'), MARKET_FILE = path.join(DATA_DIR, 'market.json');
+let market = { seq: 1, listings: [], payouts: {} };
+try { market = Object.assign(market, JSON.parse(fs.readFileSync(MARKET_FILE, 'utf8'))); } catch {}
+let saveTimer = null;
+function saveMarket() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(MARKET_FILE, JSON.stringify(market)); } catch (e) { console.log('market save error', e.message); } }, 500); }
+const MARKET_FEE = 0.05;
+function marketList() { return market.listings.slice().sort((a, b) => b.t - a.t); }
+function payout(uid) {
+  const po = market.payouts[uid]; if (!po) return;
+  for (const c of clients) if (c.uid === uid) { c.send({ t: 'payout', money: po.money, sold: po.sold }); delete market.payouts[uid]; saveMarket(); return; }
+}
+
 let roomSeq = 1;
 const rooms = new Map();
 const clients = new Set();
@@ -85,7 +98,7 @@ class Room {
       id: this.nextId++, name: o.name, team: o.team, bot: !!o.bot, client: o.client || null,
       skin: o.skin, hitR: SKINS[o.skin].hitR, headR: SKINS[o.skin].headR,
       loadout: o.loadout, nextLoadout: null, fin: o.fin || {}, weapons: o.loadout.slice(), slot: 1,
-      x: 0, y: 0, z: 0, vz: 0, og: true, angle: 0, pitch: 0, hp: C.HP, alive: false, respawnAt: 0,
+      x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, og: true, cr: false, spd: 0, mv: 0, heavy: false, angle: 0, pitch: 0, hp: C.HP, alive: false, respawnAt: 0,
       ammo: [0, 0, 0], reloadUntil: 0, switchUntil: 0, lastShot: 0, kills: 0, deaths: 0,
       queue: [], lastSeq: 0, fire: false, prevF: false, edgeAt: 0, moving: false, scoped: false, scopedAt: 0, spray: 0, rt: 0,
       hist: [],
@@ -111,7 +124,7 @@ class Room {
       if (near > best) { best = near; pick = s; }
     }
     p.x = (pick[0] + 0.5) * C.TILE + (Math.random() - 0.5) * 14; p.y = (pick[1] + 0.5) * C.TILE + (Math.random() - 0.5) * 14;
-    p.z = S.groundAt(map, p.x, p.y, C.R, 200); p.vz = 0; p.og = true;
+    p.z = S.groundAt(map, p.x, p.y, C.R, 200); p.vx = 0; p.vy = 0; p.vz = 0; p.og = true; p.cr = false; p.spd = 0; p.mv = 0;
     p.angle = p.team === 'A' ? 0 : Math.PI; p.pitch = 0;
     p.hp = C.HP; p.alive = true; p.reloadUntil = 0; p.switchUntil = 0; p.queue.length = 0;
     p.scoped = false; p.spray = 0; p.hist = [];
@@ -166,18 +179,18 @@ class Room {
 
   // положение игрока q в прошлом (компенсация пинга)
   posAt(q, tk) {
-    if (tk >= this.tick || !q.hist.length) return q;
+    if (tk >= this.tick || !q.hist.length) return { x: q.x, y: q.y, z: q.z, cr: q.cr };
     const h = q.hist;
     for (let i = h.length - 1; i > 0; i--) {
-      if (h[i - 1][0] <= tk) { const a = h[i - 1], b = h[i], f = b[0] === a[0] ? 1 : (tk - a[0]) / (b[0] - a[0]); return { x: a[1] + (b[1] - a[1]) * f, y: a[2] + (b[2] - a[2]) * f, z: a[3] + (b[3] - a[3]) * f }; }
+      if (h[i - 1][0] <= tk) { const a = h[i - 1], b = h[i], f = b[0] === a[0] ? 1 : (tk - a[0]) / (b[0] - a[0]); return { x: a[1] + (b[1] - a[1]) * f, y: a[2] + (b[2] - a[2]) * f, z: a[3] + (b[3] - a[3]) * f, cr: f < 0.5 ? a[4] : b[4] }; }
     }
-    return { x: h[0][1], y: h[0][2], z: h[0][3] };
+    return { x: h[0][1], y: h[0][2], z: h[0][3], cr: h[0][4] };
   }
   rewindTick(p) { if (p.bot) return this.tick; return Math.max(this.tick - 18, Math.min(this.tick, p.rt || this.tick)); }
 
   traceShot(p, yaw, pitch, w, tk) {
     const [dx, dy, dz] = S.dirFrom(yaw, pitch);
-    const oz = p.z + C.EYE;
+    const oz = p.z + (p.cr ? C.EYEC : C.EYE);
     const wall = S.ray3(this.map, p.x, p.y, oz, dx, dy, dz, w.range);
     const hits = [];
     for (const q of this.players.values()) {
@@ -191,37 +204,41 @@ class Room {
   }
 
   los(a, q, d) {
-    const ox = a.x, oy = a.y, oz = a.z + C.EYE;
-    for (const hz of [q.z + 39, q.z + 22]) {
+    const ox = a.x, oy = a.y, oz = a.z + (a.cr ? C.EYEC : C.EYE);
+    for (const hz of q.cr ? [q.z + 27, q.z + 15] : [q.z + 39, q.z + 22]) {
       const dx = q.x - ox, dy = q.y - oy, dz = hz - oz, L = Math.hypot(dx, dy, dz);
       if (S.ray3(this.map, ox, oy, oz, dx / L, dy / L, dz / L, L).t >= L - 2) return true;
     }
     return false;
   }
 
-  shoot(p, now) {
+  shoot(p, now, heavy) {
     const w = this.curW(p), wid = w.id, tk = this.rewindTick(p);
     p.lastShot = now;
     if (w.cat === 'knife') {
+      const range = heavy ? w.range * 0.85 : w.range;
       let best = null, bd = 1e9;
       for (const q of this.players.values()) {
         if (!q.alive || q.team === p.team) continue;
         const pos = this.posAt(q, tk);
         const d = Math.hypot(pos.x - p.x, pos.y - p.y);
-        if (d > w.range + q.hitR || Math.abs(pos.z - p.z) > 30) continue;
+        if (d > range + q.hitR || Math.abs(pos.z - p.z) > 30) continue;
         if (Math.abs(angDiff(p.angle, Math.atan2(pos.y - p.y, pos.x - p.x))) > 0.9) continue;
         if (!this.los(p, q, d)) continue;
         if (d < bd) { bd = d; best = q; }
       }
-      const ex = best ? best.x : p.x + Math.cos(p.angle) * w.range, ey = best ? best.y : p.y + Math.sin(p.angle) * w.range;
-      this.shots.push([Math.round(p.x), Math.round(p.y), Math.round(p.z + C.EYE), Math.round(ex), Math.round(ey), Math.round(p.z + 28), 0, best ? 1 : 2, wid, p.id, 1, 0]);
-      if (best) this.damage(p, best, w.dmg, wid, now, false);
+      const ex = best ? best.x : p.x + Math.cos(p.angle) * range, ey = best ? best.y : p.y + Math.sin(p.angle) * range;
+      let back = false;
+      if (best) { const att = Math.atan2(best.y - p.y, best.x - p.x); back = Math.abs(angDiff(best.angle, att)) < 1.0; }
+      this.shots.push([Math.round(p.x), Math.round(p.y), Math.round(p.z + C.EYE), Math.round(ex), Math.round(ey), Math.round(p.z + 28), 0, best ? 1 : 2, wid, p.id, heavy ? 2 : 1, back ? 1 : 0]);
+      if (best) this.damage(p, best, heavy ? (back ? 180 : w.heavy) : (back ? 90 : w.dmg), wid, now, false);
       return;
     }
     p.ammo[p.slot]--;
     const scoped = (p.scoped || now - p.scopedAt < 200) && w.scope;
-    let base = scoped ? w.sspread : p.moving ? w.mspread : w.spread;
+    let base = scoped ? w.sspread : p.spd > 0.55 ? w.mspread : w.spread;
     if (!p.og) base = Math.max(base, w.mspread * 1.5);
+    else if (p.cr) base *= 0.75;
     base += p.spray;
     if (p.bot) base = base * 1.6 + 0.012;
     p.spray = Math.min(0.06, p.spray + w.recoil);
@@ -339,7 +356,8 @@ class Room {
     let k = 0, yaw = b.angle;
     if (len > 0) { yaw = Math.atan2(my, mx); k = 1; }
     if (b.stuck > 6 && b.og) { jump = true; b.stuck = 0; }
-    b.moving = S.step(map, b, k, yaw, jump, S.speedOf(w.id, b.scoped), C.DT);
+    b.spd = S.step(map, b, k, yaw, jump ? 1 : 0, S.speedOf(w.id, b.scoped), C.DT);
+    b.moving = b.spd > 0.3; b.mv = b.spd < 0.1 ? 0 : 2;
     if (k && b.blocked) { b.stuck++; if (b.stuck > 30) { b.path = null; b.strafeDir *= -1; b.stuck = 0; } } else if (k) b.stuck = 0;
   }
 
@@ -353,7 +371,6 @@ class Room {
         else {
           if (p.queue.length > 8) p.queue.splice(0, p.queue.length - 8);
           const steps = p.queue.splice(0, 3);
-          p.moving = false;
           for (const inp of steps) {
             const slot = inp.w | 0;
             if (slot >= 0 && slot <= 2) this.switchSlot(p, slot, now);
@@ -364,27 +381,31 @@ class Room {
             if (typeof inp.a === 'number' && isFinite(inp.a)) p.angle = inp.a;
             if (typeof inp.p === 'number' && isFinite(inp.p)) p.pitch = Math.max(-1.55, Math.min(1.55, inp.p));
             if (typeof inp.rt === 'number' && isFinite(inp.rt)) p.rt = inp.rt;
-            if (S.step(this.map, p, inp.k | 0, p.angle, !!inp.j, S.speedOf(w.id, p.scoped), C.DT)) p.moving = true;
+            const fl = (inp.j ? 1 : 0) | (inp.c ? 2 : 0) | (inp.wk ? 4 : 0);
+            p.spd = S.step(this.map, p, inp.k | 0, p.angle, fl, S.speedOf(w.id, p.scoped), C.DT);
+            p.moving = p.spd > 0.3; p.mv = p.spd < 0.1 ? 0 : (p.cr || inp.wk || p.spd < 0.6) ? 1 : 2;
+            p.heavy = !!inp.h;
             const f = !!inp.f;
             if (f && !p.prevF) p.edgeAt = now;
             p.prevF = f; p.fire = f;
             if (inp.r && !p.reloadUntil && w.mag && p.ammo[p.slot] < w.mag) { p.reloadUntil = now + w.reload; p.scoped = false; }
             p.lastSeq = inp.s | 0;
           }
-          if (!steps.length && !p.og) S.step(this.map, p, 0, p.angle, false, 0, C.DT); // падение без ввода
+          if (!steps.length && !p.og) S.step(this.map, p, 0, p.angle, p.cr ? 2 : 0, 0, C.DT); // падение без ввода
         }
         const w = this.curW(p);
         if (p.reloadUntil && now >= p.reloadUntil) { p.ammo[p.slot] = w.mag; p.reloadUntil = 0; }
         if (!p.fire) p.spray = Math.max(0, p.spray - 0.004);
         const wantFire = p.bot ? p.fire : w.auto ? p.fire : now - p.edgeAt < 220;
         const cd = p.bot && !w.auto ? w.fire * 1.4 : w.fire;
-        if (wantFire && !p.reloadUntil && now >= p.switchUntil && now - p.lastShot >= cd) {
-          if (w.cat === 'knife' || p.ammo[p.slot] > 0) { this.shoot(p, now); p.edgeAt = 0; }
+        if (w.cat === 'knife' && p.heavy && !p.bot && now >= p.switchUntil && now - p.lastShot >= 1000) this.shoot(p, now, true);
+        else if (wantFire && !p.reloadUntil && now >= p.switchUntil && now - p.lastShot >= cd) {
+          if (w.cat === 'knife' || p.ammo[p.slot] > 0) { this.shoot(p, now, false); p.edgeAt = 0; }
           else if (w.mag) p.reloadUntil = now + w.reload;
         }
         if (p.z < -200) { p.hp = 0; this.kill(p, p, now, KNIFE, false); }
       }
-      for (const p of this.players.values()) { p.hist.push([this.tick, p.x, p.y, p.z]); if (p.hist.length > 24) p.hist.shift(); }
+      for (const p of this.players.values()) { p.hist.push([this.tick, p.x, p.y, p.z, p.cr]); if (p.hist.length > 24) p.hist.shift(); }
       if (this.score.A >= C.SCORE_LIMIT || this.score.B >= C.SCORE_LIMIT || now >= this.endAt) {
         this.state = 'end';
         this.winner = this.score.A === this.score.B ? 'D' : this.score.A > this.score.B ? 'A' : 'B';
@@ -398,7 +419,7 @@ class Room {
     const pl = [];
     for (const p of this.players.values()) {
       const w = this.curW(p);
-      pl.push([p.id, p.team === 'A' ? 0 : 1, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.z), Math.round(p.angle * 100) / 100, Math.round(p.pitch * 100) / 100, Math.max(0, p.hp), p.alive ? 1 : 0, p.bot ? 1 : 0, w.id, p.skin, p.scoped ? 1 : 0, p.moving ? 1 : 0, p.fin[w.id] ?? -1]);
+      pl.push([p.id, p.team === 'A' ? 0 : 1, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.z), Math.round(p.angle * 100) / 100, Math.round(p.pitch * 100) / 100, Math.max(0, p.hp), p.alive ? 1 : 0, p.bot ? 1 : 0, w.id, p.skin, p.scoped ? 1 : 0, p.mv, p.fin[w.id] ?? -1, p.cr ? 1 : 0]);
     }
     const base = { t: 's', tk: this.tick, p: pl, sc: [this.score.A, this.score.B], tl: this.state === 'play' ? Math.max(0, this.endAt - now) : Math.max(0, this.nextAt - now), st: this.state, w: this.winner, sh: this.shots, ev: this.events };
     let roster = null;
@@ -406,7 +427,7 @@ class Room {
     for (const p of this.players.values()) {
       if (p.bot || !p.client) continue;
       const w = this.curW(p);
-      const msg = Object.assign({}, base, { me: { id: p.id, seq: p.lastSeq, x: p.x, y: p.y, z: p.z, vz: p.vz, og: p.og ? 1 : 0, slot: p.slot, wpn: p.weapons, ammo: p.ammo[p.slot], mag: w.mag, rl: p.reloadUntil ? Math.max(0, p.reloadUntil - now) : 0, sw: Math.max(0, p.switchUntil - now), ri: p.alive ? 0 : Math.max(0, p.respawnAt - now) } });
+      const msg = Object.assign({}, base, { me: { id: p.id, seq: p.lastSeq, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, og: p.og ? 1 : 0, cr: p.cr ? 1 : 0, slot: p.slot, wpn: p.weapons, ammo: p.ammo[p.slot], mag: w.mag, rl: p.reloadUntil ? Math.max(0, p.reloadUntil - now) : 0, sw: Math.max(0, p.switchUntil - now), ri: p.alive ? 0 : Math.max(0, p.respawnAt - now) } });
       if (roster) msg.r = roster;
       p.client.send(msg);
     }
@@ -425,7 +446,7 @@ function quickRoom() {
 
 const wss = new WebSocketServer({ server, maxPayload: 8192 });
 wss.on('connection', (ws) => {
-  const client = { ws, room: null, me: null, admin: false, send(o) { if (ws.readyState === 1) ws.send(JSON.stringify(o)); } };
+  const client = { ws, room: null, me: null, admin: false, uid: '', send(o) { if (ws.readyState === 1) ws.send(JSON.stringify(o)); } };
   clients.add(client);
   const leave = (why) => {
     if (client.room && client.me) { const r = client.room; r.removeHuman(client.me, why); }
@@ -459,6 +480,34 @@ wss.on('connection', (ws) => {
       case 'in': if (client.me) client.me.queue.push(msg); break;
       case 'lo': if (client.me) { client.me.nextLoadout = validLoadout(msg.lo); client.me.fin = validFin(msg.fin); } break;
       case 'ping': client.send({ t: 'pong', c: msg.c }); break;
+      case 'hello': client.uid = clean(msg.uid, 40); if (client.uid) payout(client.uid); break;
+      case 'market': client.send({ t: 'market', list: marketList() }); break;
+      case 'sell': {
+        const fid = msg.fid | 0, price = Math.floor(+msg.price);
+        if (!client.uid || !S.FINISHES[fid]) return client.send({ t: 'err', msg: 'Не удалось выставить предмет' });
+        if (!(price >= 10 && price <= 1000000)) return client.send({ t: 'err', msg: 'Цена от $10 до $1 000 000' });
+        if (market.listings.filter((l) => l.seller === client.uid).length >= 30) return client.send({ t: 'err', msg: 'Максимум 30 лотов' });
+        const l = { id: market.seq++, fid, price, seller: client.uid, sname: clean(msg.name, 16) || 'Игрок', t: Date.now() };
+        market.listings.push(l); saveMarket();
+        client.send({ t: 'sold_listed', id: l.id, fid }); client.send({ t: 'market', list: marketList() }); break;
+      }
+      case 'buy': {
+        const i = market.listings.findIndex((l) => l.id === (msg.id | 0));
+        if (i < 0) return client.send({ t: 'err', msg: 'Лот уже продан или снят' });
+        const l = market.listings[i];
+        if (l.seller === client.uid) return client.send({ t: 'err', msg: 'Это твой лот' });
+        market.listings.splice(i, 1);
+        const po = market.payouts[l.seller] || (market.payouts[l.seller] = { money: 0, sold: [] });
+        po.money += Math.floor(l.price * (1 - MARKET_FEE)); po.sold.push({ fid: l.fid, price: l.price });
+        saveMarket(); payout(l.seller);
+        client.send({ t: 'bought', fid: l.fid, price: l.price }); client.send({ t: 'market', list: marketList() }); break;
+      }
+      case 'unlist': {
+        const i = market.listings.findIndex((l) => l.id === (msg.id | 0) && l.seller === client.uid);
+        if (i < 0) return client.send({ t: 'err', msg: 'Лот не найден' });
+        const l = market.listings.splice(i, 1)[0]; saveMarket();
+        client.send({ t: 'unlisted', fid: l.fid }); client.send({ t: 'market', list: marketList() }); break;
+      }
       case 'admin': client.admin = clean(msg.pass, 64) === ADMIN_PASSWORD; client.send({ t: 'admin', ok: client.admin }); break;
       case 'adm': if (client.admin) admin(client, msg); break;
     }
