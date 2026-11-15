@@ -8,14 +8,16 @@ const { C, MAPS, WEAPONS, WKEY, SKINS } = S;
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, 'public');
+const THREE_PATH = path.join(__dirname, 'node_modules', 'three', 'build', 'three.module.min.js');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon' };
 
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   if (p === '/') p = '/index.html';
   if (p === '/health') { res.writeHead(200); return res.end('ok'); }
-  const fp = path.join(PUBLIC, path.normalize(p));
-  if (!fp.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
+  let fp;
+  if (p === '/three.module.js') fp = THREE_PATH;
+  else { fp = path.join(PUBLIC, path.normalize(p)); if (!fp.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); } }
   fs.readFile(fp, (err, data) => {
     if (err) { res.writeHead(404); return res.end('Not found'); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(fp)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
@@ -71,9 +73,9 @@ class Match {
   newPlayer(name, team, bot, ws, skin, loadout) {
     const p = {
       id: this.nextId++, name, team, bot, ws,
-      skin, hitR: SKINS[skin].hitR,
+      skin, hitR: SKINS[skin].hitR, headR: SKINS[skin].headR,
       loadout, nextLoadout: null, weapons: loadout.slice(), slot: 1,
-      x: 0, y: 0, angle: 0, hp: C.HP, alive: false, respawnAt: 0,
+      x: 0, y: 0, z: 0, vz: 0, og: true, angle: 0, pitch: 0, hp: C.HP, alive: false, respawnAt: 0,
       ammo: [0, 0, 0], reloadUntil: 0, switchUntil: 0, lastShot: 0, kills: 0, deaths: 0,
       queue: [], lastSeq: 0, fire: false, prevF: false, edgeAt: 0, moving: false, scoped: false, spray: 0,
       // бот
@@ -95,11 +97,11 @@ class Match {
     for (const s of list) {
       const x = (s[0] + 0.5) * C.TILE, y = (s[1] + 0.5) * C.TILE;
       let free = true;
-      for (const q of this.players.values()) if (q !== p && q.alive && Math.hypot(q.x - x, q.y - y) < C.R * 2) { free = false; break; }
+      for (const q of this.players.values()) if (q !== p && q.alive && Math.hypot(q.x - x, q.y - y) < C.R * 3) { free = false; break; }
       if (free) { pick = s; break; }
     }
     p.x = (pick[0] + 0.5) * C.TILE; p.y = (pick[1] + 0.5) * C.TILE;
-    p.angle = p.team === 'A' ? 0 : Math.PI;
+    p.angle = p.team === 'A' ? 0 : Math.PI; p.pitch = 0; p.z = 0; p.vz = 0; p.og = true;
     p.hp = C.HP; p.alive = true; p.reloadUntil = 0; p.switchUntil = 0; p.queue.length = 0;
     p.scoped = false; p.spray = 0;
     p.path = null; p.tgtId = null; p.spawnProtect = Date.now() + 1500;
@@ -150,24 +152,19 @@ class Match {
 
   curW(p) { return WEAPONS[p.weapons[p.slot]] || WEAPONS[KNIFE]; }
 
-  // Пуля/дробина: возвращает список попаданий
-  traceShot(p, a, w) {
-    const dx = Math.cos(a), dy = Math.sin(a);
-    const wallT = S.rayWall(this.map, p.x, p.y, a, w.range);
+  // Пуля/дробина в 3D: возвращает стену и попадания по игрокам
+  traceShot(p, yaw, pitch, w) {
+    const [dx, dy, dz] = S.dirFrom(yaw, pitch);
+    const oz = p.z + C.EYE;
+    const wall = S.ray3(this.map, p.x, p.y, oz, dx, dy, dz, w.range);
     const hits = [];
     for (const q of this.players.values()) {
       if (!q.alive || q.team === p.team) continue;
-      const cx = q.x - p.x, cy = q.y - p.y;
-      const proj = cx * dx + cy * dy;
-      if (proj < 0) continue;
-      const perp2 = cx * cx + cy * cy - proj * proj;
-      const r = q.hitR;
-      if (perp2 > r * r) continue;
-      const t = proj - Math.sqrt(r * r - perp2);
-      if (t < wallT) hits.push({ q, t });
+      const h = S.hitPlayer(p.x, p.y, oz, dx, dy, dz, q, q.hitR, q.headR);
+      if (h && h.t < wall.t) hits.push({ q, t: h.t, head: h.head });
     }
     hits.sort((u, v) => u.t - v.t);
-    return { dx, dy, wallT, hits };
+    return { dx, dy, dz, oz, wall, hits };
   }
 
   shoot(p, now) {
@@ -179,15 +176,15 @@ class Match {
       for (const q of this.players.values()) {
         if (!q.alive || q.team === p.team) continue;
         const d = dist(p, q);
-        if (d > w.range + q.hitR) continue;
+        if (d > w.range + q.hitR || Math.abs(q.z - p.z) > 30) continue;
         const a = Math.atan2(q.y - p.y, q.x - p.x);
         if (Math.abs(angDiff(p.angle, a)) > 0.9) continue;
-        if (S.rayWall(this.map, p.x, p.y, a, d) < d - q.hitR) continue;
+        if (!this.los(p, q, d)) continue;
         if (d < bd) { bd = d; best = q; }
       }
-      const ex = p.x + Math.cos(p.angle) * w.range, ey = p.y + Math.sin(p.angle) * w.range;
-      this.shots.push([Math.round(p.x), Math.round(p.y), Math.round(ex), Math.round(ey), p.team === 'A' ? 0 : 1, best ? 1 : 2, wid, p.id, 1]);
-      if (best) this.damage(p, best, w.dmg, wid, now);
+      const ex = best ? best.x : p.x + Math.cos(p.angle) * w.range, ey = best ? best.y : p.y + Math.sin(p.angle) * w.range;
+      this.shots.push([Math.round(p.x), Math.round(p.y), Math.round(p.z + C.EYE), Math.round(ex), Math.round(ey), Math.round(p.z + 28), 2, best ? 1 : 2, wid, p.id, 1, 0]);
+      if (best) this.damage(p, best, w.dmg, wid, now, false);
       return;
     }
     p.ammo[p.slot]--;
@@ -197,38 +194,38 @@ class Match {
     if (p.bot) base = base * 1.6 + 0.015;
     p.spray = Math.min(0.07, p.spray + w.recoil);
     for (let i = 0; i < w.pellets; i++) {
-      const a = p.angle + gauss() * base;
-      const tr = this.traceShot(p, a, w);
-      let endT = tr.wallT, flag = tr.wallT < w.range - 1 ? 0 : 2;
+      const yaw = p.angle + gauss() * base, pitch = p.pitch + gauss() * base * 0.8 + (w.cat === 'knife' ? 0 : p.spray * 0.6);
+      const tr = this.traceShot(p, yaw, pitch, w);
+      let endT = tr.wall.t, flag = tr.wall.n ? 0 : 2, nrm = tr.wall.n;
       let dmg = w.dmg;
       const targets = w.pierce ? tr.hits : tr.hits.slice(0, 1);
       if (targets.length) {
         if (!w.pierce) { endT = targets[0].t; flag = 1; }
         for (const h of targets) {
-          // дробь слабее на расстоянии
           const fall = w.cat === 'shotgun' ? Math.max(0.35, 1 - h.t / w.range) : 1;
-          this.damage(p, h.q, dmg * fall, wid, now);
+          this.damage(p, h.q, dmg * fall * (h.head ? C.HEAD_MULT : 1), wid, now, h.head);
           if (w.pierce) dmg *= 0.85;
         }
       }
-      this.shots.push([Math.round(p.x), Math.round(p.y), Math.round(p.x + tr.dx * endT), Math.round(p.y + tr.dy * endT), p.team === 'A' ? 0 : 1, flag, wid, p.id, i === 0 ? 1 : 0]);
-      // для пробития отмечаем попадания отдельными короткими событиями крови
-      if (w.pierce) for (const h of targets) this.shots.push([0, 0, Math.round(p.x + tr.dx * h.t), Math.round(p.y + tr.dy * h.t), 0, 3, wid, p.id, 0]);
+      const nn = nrm ? (nrm[0] ? (nrm[0] > 0 ? 1 : 2) : nrm[1] ? (nrm[1] > 0 ? 3 : 4) : nrm[2] > 0 ? 5 : 6) : 0;
+      const ex = p.x + tr.dx * endT, ey = p.y + tr.dy * endT, ez = tr.oz + tr.dz * endT;
+      this.shots.push([Math.round(p.x), Math.round(p.y), Math.round(tr.oz), Math.round(ex), Math.round(ey), Math.round(ez), nn, flag, wid, p.id, i === 0 ? 1 : 0, targets[0] && targets[0].head ? 1 : 0]);
+      if (w.pierce) for (const h of targets) this.shots.push([0, 0, 0, Math.round(p.x + tr.dx * h.t), Math.round(p.y + tr.dy * h.t), Math.round(tr.oz + tr.dz * h.t), 0, 3, wid, p.id, 0, h.head ? 1 : 0]);
     }
     if (w.scope === 2) p.scoped = false; // снайперки выходят из прицела после выстрела (как в CS)
   }
 
-  damage(p, q, dmg, wid, now) {
+  damage(p, q, dmg, wid, now, head) {
     if (q.spawnProtect > now || !q.alive) return;
     q.hp -= Math.round(dmg);
-    if (q.hp <= 0) this.kill(p, q, now, wid);
+    if (q.hp <= 0) this.kill(p, q, now, wid, head);
   }
 
-  kill(killer, victim, now, wid) {
+  kill(killer, victim, now, wid, head) {
     victim.alive = false; victim.hp = 0; victim.respawnAt = now + C.RESPAWN_MS; victim.deaths++;
     killer.kills++;
     this.score[killer.team]++;
-    this.events.push({ t: 'kill', k: killer.id, v: victim.id, kn: killer.name, vn: victim.name, kt: killer.team, vt: victim.team, w: wid });
+    this.events.push({ t: 'kill', k: killer.id, v: victim.id, kn: killer.name, vn: victim.name, kt: killer.team, vt: victim.team, w: wid, hs: head ? 1 : 0 });
   }
 
   findPath(fromX, fromY, goal) {
@@ -265,8 +262,7 @@ class Match {
       if (q.team === b.team || !q.alive) continue;
       const d = dist(b, q);
       if (d > 1100 || d >= bd) continue;
-      const a = Math.atan2(q.y - b.y, q.x - b.x);
-      if (S.rayWall(map, b.x, b.y, a, d) >= d - 1) { tgt = q; bd = d; }
+      if (this.los(b, q, d)) { tgt = q; bd = d; }
     }
     const w = this.curW(b);
     let mx = 0, my = 0;
@@ -279,6 +275,8 @@ class Match {
       const d = angDiff(b.angle, want);
       const maxTurn = 6 * C.DT;
       b.angle += Math.max(-maxTurn, Math.min(maxTurn, d));
+      const wantP = Math.atan2(tgt.z + 30 - (b.z + C.EYE), bd) + b.aimJitter * 0.3;
+      b.pitch += (wantP - b.pitch) * 0.3;
       const sniper = w.cat === 'sniper';
       b.fire = now - b.seenAt > (sniper ? 700 : 380) && Math.abs(d) < (sniper ? 0.06 : 0.18);
       if (sniper) { b.scoped = true; }
@@ -305,6 +303,7 @@ class Match {
         else { const a = Math.atan2(ny - b.y, nx - b.x); mx = Math.cos(a); my = Math.sin(a); }
         const look = Math.atan2(my, mx);
         if (mx || my) b.angle += Math.max(-0.2, Math.min(0.2, angDiff(b.angle, look)));
+        b.pitch *= 0.8;
       }
       if (w.mag && b.ammo[b.slot] < w.mag && !b.reloadUntil) b.reloadUntil = now + w.reload;
     }
@@ -313,12 +312,21 @@ class Match {
       mx /= len; my /= len;
       const sp = S.speedOf(w.id, b.scoped) * C.DT;
       const ox = b.x, oy = b.y;
-      const r = S.move(map, b.x, b.y, mx * sp, my * sp, C.R);
+      const r = S.move(map, b.x, b.y, mx * sp, my * sp, C.R, b.z);
       b.x = r.x; b.y = r.y;
       b.moving = true;
       if (Math.hypot(b.x - ox, b.y - oy) < 0.5) { if (++b.stuck > 12) { b.path = null; b.stuck = 0; b.strafeDir *= -1; } }
       else b.stuck = 0;
     } else b.moving = false;
+  }
+
+  los(a, q, d) {
+    const ox = a.x, oy = a.y, oz = a.z + C.EYE;
+    for (const hz of [q.z + 39, q.z + 22]) {
+      const dx = q.x - ox, dy = q.y - oy, dz = hz - oz, L = Math.hypot(dx, dy, dz);
+      if (S.ray3(this.map, ox, oy, oz, dx / L, dy / L, dz / L, L).t >= L - 2) return true;
+    }
+    return false;
   }
 
   switchSlot(p, slot, now) {
@@ -343,13 +351,9 @@ class Match {
             if (slot >= 0 && slot <= 2) this.switchSlot(p, slot, now);
             const w = this.curW(p);
             p.scoped = !!inp.z && !!w.scope;
-            const [mx, my] = S.keyDir(inp.k | 0);
-            if (mx || my) {
-              const sp = S.speedOf(w.id, p.scoped) * C.DT;
-              const r = S.move(this.map, p.x, p.y, mx * sp, my * sp, C.R);
-              p.x = r.x; p.y = r.y; p.moving = true;
-            }
             if (typeof inp.a === 'number' && isFinite(inp.a)) p.angle = inp.a;
+            if (typeof inp.p === 'number' && isFinite(inp.p)) p.pitch = Math.max(-1.55, Math.min(1.55, inp.p));
+            if (S.step(this.map, p, inp.k | 0, p.angle, !!inp.j, S.speedOf(w.id, p.scoped), C.DT)) p.moving = true;
             const f = !!inp.f;
             if (f && !p.prevF) p.edgeAt = now;
             p.prevF = f; p.fire = f;
@@ -382,7 +386,7 @@ class Match {
   send(now) {
     const pl = [];
     for (const p of this.players.values())
-      pl.push([p.id, p.team === 'A' ? 0 : 1, Math.round(p.x), Math.round(p.y), Math.round(p.angle * 100) / 100, Math.max(0, p.hp), p.alive ? 1 : 0, p.bot ? 1 : 0, this.curW(p).id, p.skin, p.scoped ? 1 : 0]);
+      pl.push([p.id, p.team === 'A' ? 0 : 1, Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.z), Math.round(p.angle * 100) / 100, Math.round(p.pitch * 100) / 100, Math.max(0, p.hp), p.alive ? 1 : 0, p.bot ? 1 : 0, this.curW(p).id, p.skin, p.scoped ? 1 : 0, p.moving ? 1 : 0]);
     const base = {
       t: 's', p: pl, sc: [this.score.A, this.score.B],
       tl: this.state === 'play' ? Math.max(0, this.endAt - now) : Math.max(0, this.nextAt - now),
@@ -397,7 +401,7 @@ class Match {
       const w = this.curW(p);
       const msg = Object.assign({}, base, {
         me: {
-          id: p.id, seq: p.lastSeq, slot: p.slot, wpn: p.weapons, ammo: p.ammo[p.slot], mag: w.mag,
+          id: p.id, seq: p.lastSeq, x: p.x, y: p.y, z: p.z, vz: p.vz, og: p.og ? 1 : 0, slot: p.slot, wpn: p.weapons, ammo: p.ammo[p.slot], mag: w.mag,
           rl: p.reloadUntil ? Math.max(0, p.reloadUntil - now) : 0, sw: Math.max(0, p.switchUntil - now),
           ri: p.alive ? 0 : Math.max(0, p.respawnAt - now),
         },
