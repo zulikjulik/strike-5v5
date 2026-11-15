@@ -1,0 +1,15 @@
+{
+  "name": "strike-5v5",
+  "version": "1.0.0",
+  "description": "Лёгкий браузерный онлайн-шутер 5 на 5 с тремя картами",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
