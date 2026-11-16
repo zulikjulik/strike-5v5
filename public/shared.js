@@ -33,9 +33,32 @@
     const at = (x, y) => g[y * W + x];
     const ok = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
     const set = (x, y, s, kind, extra) => { if (!ok(x, y)) return; const c = at(x, y); c.s = s; c.kind = kind || 'out'; c.ramp = null; c.spawn = null; Object.assign(c, extra || {}); };
-    const trims = [], trucks = [], chimneys = [];
+    const trims = [], trucks = [], chimneys = [], props = [];
     const B = {
-      g, at, trims, trucks, chimneys,
+      g, at, trims, trucks, chimneys, props, set,
+      // декор для отрисовки: {type, x, y, w, h, ...} — w нужен для зеркала
+      prop(o) { props.push(Object.assign({ w: 1, h: 1 }, o)); },
+      // платформа метро (высота 1 м)
+      platform(x0, y0, x1, y1, h = 24) { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(x, y, [[0, h, 'platform']], 'plat'); },
+      // колонна до потолка
+      pillar(x, y, mat = 'pillar') { set(x, y, [[0, 400, mat]], 'wall'); },
+      // лестница-пандус в одну клетку: подъём в сторону (dx, dy)
+      stairs(x, y, dx, dy, z0 = 0, z1 = 24) { set(x, y, [], 'out', { ramp: { dx, dy, z0, z1 } }); },
+      // предмет на платформе: скамейка/автомат/урна (низ — платформа)
+      onPlat(x, y, mat, top) { set(x, y, [[0, 24, 'platform'], [24, top, mat]], 'plat'); B.prop({ type: mat, x, y }); },
+      // вагон-спавн: ряды y (стена с дверями), y+1 (салон), y+2 (стена с дверями)
+      spawnCar(x0, y, len) {
+        for (let x = x0; x < x0 + len; x++) {
+          const door = (x - x0) % 3 === 1;
+          for (const yy of [y, y + 2]) set(x, yy, door ? [[0, 24, 'trainfloor'], [92, 108, 'train']] : [[0, 108, 'train']], door ? 'door' : 'wall');
+          set(x, y + 1, [[0, 24, 'trainfloor'], [100, 108, 'train']], 'in', { spawn: x > x0 && x < x0 + len - 1 ? 'A' : null });
+        }
+        B.prop({ type: 'car', x: x0, y, w: len, h: 3, spawnCar: true });
+      },
+      // стоящий поезд-укрытие (2 ряда)
+      train(x0, y, len) { for (let x = x0; x < x0 + len; x++) for (const yy of [y, y + 1]) set(x, yy, [[0, 100, 'train']], 'wall'); B.prop({ type: 'car', x: x0, y, w: len, h: 2 }); },
+      // прилавок с коврами (Ичеришехер)
+      stall(x, y) { set(x, y, [[0, 30, 'stall']], 'crate'); B.prop({ type: 'stall', x, y }); },
       wall(x0, y0, x1, y1, h = 72, mat = 'wall') { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(x, y, [[0, h, mat]], 'wall'); },
       crate(x, y, tall) { set(x, y, [[0, tall ? 52 : 26, 'crate']], 'crate'); },
       barrel(x, y) { set(x, y, [[0, 30, 'barrel']], 'barrel'); },
@@ -116,11 +139,49 @@
     const tr = B.trims.slice(); for (const t of tr) if (t[0] < HALF) B.trims.push([W - 1 - t[0], t[1], t[2]]);
     for (const t of B.trucks.slice()) B.trucks.push({ x: W - 2 - t.x, y: t.y, team: 'B' });
     for (const c of B.chimneys.slice()) B.chimneys.push([W - 1 - c[0], c[1], c[2]]);
+    for (const p of B.props.slice()) if (p.x < HALF) B.props.push(Object.assign({}, p, { x: W - p.x - p.w, mirror: true }));
   }
 
-  function border(B) {
-    for (let x = 0; x < W; x++) { B.at(x, 0).s = [[0, 120, 'border']]; B.at(x, 0).kind = 'wall'; B.at(x, H - 1).s = [[0, 120, 'border']]; B.at(x, H - 1).kind = 'wall'; }
-    for (let y = 0; y < H; y++) { B.at(0, y).s = [[0, 120, 'border']]; B.at(0, y).kind = 'wall'; B.at(W - 1, y).s = [[0, 120, 'border']]; B.at(W - 1, y).kind = 'wall'; }
+  function border(B, h = 120, mat = 'border') {
+    const put = (x, y) => { const c = B.at(x, y); c.s = [[0, h, mat]]; c.kind = 'wall'; c.ramp = null; c.spawn = null; };
+    for (let x = 0; x < W; x++) { put(x, 0); put(x, H - 1); }
+    for (let y = 0; y < H; y++) { put(0, y); put(W - 1, y); }
+  }
+  // потолок над всей картой (метро)
+  function ceiling(B, z0, z1) {
+    for (const c of B.g) {
+      c.s = c.s.map((r) => [r[0], Math.min(r[1], z0), r[2]]).filter((r) => r[1] > r[0]);
+      c.s.push([z0, z1, 'ceil']);
+    }
+  }
+
+  // Метро: центр — разорванный поезд, сложившийся «домиком» на втором пути
+  function metroCenter(B) {
+    for (let x = 18; x <= 25; x++) {
+      const k = x <= 21 ? x - 18 : 25 - x; // 0..3 к центру
+      const lo = k * 16, hi = lo + 72;
+      for (const y of [17, 18]) { const c = B.at(x, y); c.s = lo > 0 ? [[lo, hi, 'wreck']] : [[0, hi, 'wreck']]; c.kind = 'wall'; c.ramp = null; c.spawn = null; }
+    }
+    B.prop({ type: 'wreck', x: 18, y: 17, w: 8, h: 2 });
+  }
+
+  // Ичеришехер: Девичья башня в центре (круглая, с контрфорсом на север)
+  const MT = { cx: 22, cy: 13, R: 4.15, H: 708 };
+  function maidenTower(B) {
+    const { cx, cy, R } = MT;
+    for (let y = 6; y <= 20; y++) for (let x = 15; x <= 28; x++) {
+      const c = B.at(x, y), d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+      if (d < R) {
+        c.ramp = null; c.spawn = null;
+        if (d >= R - 1.15) { c.s = [[0, MT.H, 'mtower']]; c.kind = 'wall'; }
+        else { c.s = [[72, MT.H, 'mtower']]; c.kind = 'in'; }
+      } else if (d < R + 1.25 && c.kind !== 'wall') { c.s = []; c.kind = 'out'; c.ramp = null; }
+    }
+    // входы с запада и востока
+    for (const y of [12, 13]) for (const x of [18, 25]) { const c = B.at(x, y); c.s = [[64, MT.H, 'mtower']]; c.kind = 'door'; }
+    // контрфорс с севера
+    for (const y of [7, 8]) for (const x of [21, 22]) { const c = B.at(x, y); c.s = [[0, 660, 'mtower']]; c.kind = 'wall'; c.ramp = null; c.spawn = null; }
+    B.prop({ type: 'maiden', x: cx, y: cy, w: 0 });
   }
 
   // ---------------- пять карт ----------------
@@ -179,33 +240,70 @@
       B.tree(4, 5); B.tree(3, 21); B.tree(13, 9); B.tree(13, 16); B.tree(16, 10); B.tree(11, 13);
       B.crate(14, 12); B.crate(14, 13, true); B.barrel(20, 7); B.barrel(20, 18);
     } },
+    { name: 'Метро', theme: 'metro', center: 'metro', borderH: 156, borderMat: 'tilewall', ceil: [148, 156], build(B) {
+      // северная платформа, островная, южная; между ними два пути
+      B.platform(1, 1, 21, 5); B.platform(1, 10, 21, 15); B.platform(1, 20, 21, 24);
+      B.spawnCar(1, 6, 8);
+      B.train(4, 17, 8);
+      // лестницы с путей на платформы
+      B.stairs(12, 6, 0, -1); B.stairs(12, 9, 0, 1); B.stairs(19, 6, 0, -1); B.stairs(19, 9, 0, 1);
+      B.stairs(2, 16, 0, -1); B.stairs(2, 19, 0, 1); B.stairs(14, 16, 0, -1); B.stairs(14, 19, 0, 1);
+      // колонны
+      for (const x of [4, 9, 14, 19]) { B.pillar(x, 3); B.pillar(x, 22); }
+      B.pillar(6, 12); B.pillar(11, 13); B.pillar(16, 12); B.pillar(20, 13);
+      // скамейки, автоматы, урны
+      B.onPlat(6, 2, 'bench', 44); B.onPlat(16, 2, 'bench', 44); B.onPlat(6, 23, 'bench', 44); B.onPlat(16, 23, 'bench', 44);
+      B.onPlat(8, 11, 'bench', 44); B.onPlat(18, 14, 'bench', 44);
+      B.onPlat(11, 1, 'vend', 76); B.onPlat(11, 24, 'vend', 76); B.onPlat(3, 14, 'vend', 76);
+      B.onPlat(7, 4, 'trash', 50); B.onPlat(17, 21, 'trash', 50); B.onPlat(13, 10, 'trash', 50);
+      // укрытия на путях
+      B.crate(16, 8, true); B.crate(17, 8); B.sand(9, 9); B.crate(17, 17); B.crate(13, 18, true); B.barrel(20, 16);
+    } },
+    { name: 'Ичеришехер', theme: 'baku', center: 'maiden', borderH: 168, borderMat: 'fort', build(B) {
+      B.truck(2, 11);
+      B.house2(5, 2, { doors: [[8, 6], [11, 4]], wins: [[5, 4]] });
+      B.house2(5, 19, { doors: [[8, 19], [11, 21]], wins: [[5, 21]], rampRow: 'bottom' });
+      B.house(13, 2, 17, 6, { doors: [[15, 6], [13, 4]], wins: [[17, 4]] });
+      B.house(13, 19, 17, 23, { doors: [[15, 19], [13, 21]], wins: [[17, 21]] });
+      B.wall(9, 9, 10, 9); B.wall(9, 16, 10, 16);
+      B.stall(12, 10); B.stall(12, 15); B.stall(15, 12);
+      B.tree(4, 6); B.tree(3, 19); B.tree(11, 12);
+      B.crate(7, 12); B.crate(7, 13, true); B.barrel(19, 2); B.barrel(19, 23); B.sand(15, 9); B.sand(15, 16);
+    } },
   ];
 
   function buildMap(def) {
     const B = Builder(def.theme);
     def.build(B);
     mirror(B);
-    tower(B);
-    border(B);
+    if (def.center === 'metro') metroCenter(B);
+    else if (def.center === 'maiden') maidenTower(B);
+    else tower(B);
+    border(B, def.borderH || 120, def.borderMat || 'border');
+    if (def.center === 'metro') for (const y of [6, 7, 8, 9, 16, 17, 18, 19]) for (const x of [0, W - 1]) B.at(x, y).s = [[0, def.borderH, 'tunnel']];
+    if (def.ceil) ceiling(B, def.ceil[0], def.ceil[1]);
     const spawns = { A: [], B: [] }, floor = [];
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const c = B.at(x, y);
       if (c.spawn) spawns[c.spawn].push([x, y]);
       if (walkable(c)) floor.push([x, y]);
     }
-    return { name: def.name, theme: def.theme, W, H, cols: B.g, spawns, floor, trims: B.trims, trucks: B.trucks, chimneys: B.chimneys, pw: W * C.TILE, ph: H * C.TILE };
+    return { name: def.name, theme: def.theme, W, H, cols: B.g, spawns, floor, trims: B.trims, trucks: B.trucks, chimneys: B.chimneys, props: B.props, indoor: !!def.ceil, ceilZ: def.ceil ? def.ceil[0] : 0, pw: W * C.TILE, ph: H * C.TILE };
   }
 
   const OOB = { s: [[0, 1e5, 'border']], ramp: null, kind: 'wall' };
   function colAt(map, tx, ty) { if (tx < 0 || ty < 0 || tx >= map.W || ty >= map.H) return OOB; return map.cols[ty * map.W + tx]; }
-  // Можно ли пройти клетку по земле (для ботов)
-  function walkable(c) {
-    if (c.kind === 'bed') return true;
-    if (c.ramp) return false;
-    for (const r of c.s) if (r[1] > C.STEP && r[0] < C.PH + 2) return false;
-    return true;
+  // Высота пола клетки на нижнем уровне (для ботов) или -1, если там не встать
+  function floorOf(c) {
+    if (c.ramp) return c.ramp.z1 <= 30 ? c.ramp.z0 : -1;
+    let f = 0;
+    const s = c.s.length > 1 ? c.s.slice().sort((a, b) => a[0] - b[0]) : c.s;
+    for (const r of s) { if (r[1] <= f) continue; if (r[0] - f >= C.PH + 2) break; f = r[1]; }
+    return f > 30 ? -1 : f;
   }
+  function walkable(c) { return floorOf(c) >= 0; }
   function isWall(map, tx, ty) { return !walkable(colAt(map, tx, ty)); }
+  function floorAt(map, tx, ty) { return floorOf(colAt(map, tx, ty)); }
 
   function rampSurf(c, tx, ty, x, y) {
     const TL = C.TILE, r = c.ramp;
@@ -268,7 +366,15 @@
     const len = Math.hypot(f, s); f /= len; s /= len;
     return [Math.cos(yaw) * f + Math.cos(yaw + Math.PI / 2) * s, Math.sin(yaw) * f + Math.sin(yaw + Math.PI / 2) * s];
   }
-  // Шаг физики с инерцией. st: {x,y,z,vx,vy,vz,og,cr}. fl: 1 прыжок, 2 присед, 4 тихий шаг.
+  // Физика движения как в Source: трение, ускорение к желаемой скорости, контроль в воздухе
+  const PHYS = { ACC: 7, AIR: 12, AIRCAP: 0.12, FRIC: 6, STOP: 55, MAXH: 1.3, LAND: 0.8 };
+  function accelerate(st, wx, wy, wish, cap, accel, dt) {
+    const cur = st.vx * wx + st.vy * wy, add = cap - cur;
+    if (add <= 0) return;
+    const as = Math.min(add, accel * wish * dt);
+    st.vx += as * wx; st.vy += as * wy;
+  }
+  // Шаг физики. st: {x,y,z,vx,vy,vz,og,cr}. fl: 1 прыжок, 2 присед, 4 тихий шаг.
   // Возвращает скорость в долях от максимальной (0..1).
   function step(map, st, k, yaw, fl, speed, dt) {
     if (st.vx === undefined) { st.vx = 0; st.vy = 0; }
@@ -277,9 +383,14 @@
     const ph = st.cr ? C.PHC : C.PH;
     const mul = st.cr ? 0.45 : (fl & 4) ? 0.52 : 1;
     const [mx, my] = moveDir(k, yaw);
-    const ws = speed * mul, f = Math.min(1, (st.og ? 14 : 2.5) * dt);
-    st.vx += (mx * ws - st.vx) * f; st.vy += (my * ws - st.vy) * f;
-    if (!mx && !my && st.og && Math.hypot(st.vx, st.vy) < 4) { st.vx = 0; st.vy = 0; }
+    const wish = mx || my ? speed * mul : 0;
+    if (st.og) {
+      const sp = Math.hypot(st.vx, st.vy);
+      if (sp > 0) { const ns = Math.max(0, sp - Math.max(sp, PHYS.STOP) * PHYS.FRIC * dt); st.vx *= ns / sp; st.vy *= ns / sp; }
+      if (wish) accelerate(st, mx, my, wish, wish, PHYS.ACC, dt);
+    } else if (wish) accelerate(st, mx, my, wish, Math.min(wish, speed * PHYS.AIRCAP), PHYS.AIR, dt);
+    const hs = Math.hypot(st.vx, st.vy), cap = speed * PHYS.MAXH;
+    if (hs > cap) { st.vx *= cap / hs; st.vy *= cap / hs; }
     st.blocked = false;
     if (st.vx || st.vy) {
       const tx = st.x + st.vx * dt, ty = st.y + st.vy * dt;
@@ -301,7 +412,7 @@
       let nz = st.z + st.vz * dt;
       if (st.vz > 0) { const cz = ceilAt(map, st.x, st.y, C.R, st.z, ph); if (nz + ph > cz) { nz = cz - ph; st.vz = 0; } }
       const g2 = groundAt(map, st.x, st.y, C.R, Math.max(st.z, nz));
-      if (nz <= g2) { nz = g2; st.vz = 0; st.og = true; }
+      if (nz <= g2) { if (st.vz < -330) { st.vx *= PHYS.LAND; st.vy *= PHYS.LAND; } st.land = st.vz; nz = g2; st.vz = 0; st.og = true; }
       st.z = nz;
     }
     return speed > 0 ? Math.min(1, Math.hypot(st.vx, st.vy) / speed) : 0;
@@ -396,9 +507,37 @@
     { key: 'm249', name: 'M249', cat: 'mg', price: 11500, dmg: 27, fire: 78, mag: 100, reload: 4800, spread: 0.05, mspread: 0.1, speed: 0.8, range: 1500, recoil: 0.003 },
     { key: 'awp', name: 'AWP', cat: 'sniper', price: 15000, dmg: 150, fire: 1450, mag: 10, reload: 3000, spread: 0.13, mspread: 0.2, sspread: 0, scope: 2, speed: 0.82, auto: false, range: 2600, pierce: true, reward: 100, recoil: 0 },
   ];
-  // точность +25%: разброс и отдача ×0.75
-  const WEAPONS = WLIST.map((w, i) => { const o = Object.assign({}, WDEF, w, { id: i }); const k = 0.75 * 0.95 * 1.1; o.spread *= k; o.mspread *= k; o.sspread *= k; o.recoil *= k; return o; });
+  // acc — разброс первой пули стоя (пуля летит почти точно в прицел), kick/kickH — отдача (подброс прицела)
+  const ACC = { pistol: 0.0035, dual: 0.005, smg: 0.006, rifle: 0.0022, shotgun: 0, sniper: 0, mg: 0.007, knife: 0 };
+  const KICK = { pistol: [0.022, 0.006], dual: [0.02, 0.007], smg: [0.0078, 0.0045], rifle: [0.0105, 0.005], shotgun: [0.05, 0.012], sniper: [0.05, 0.008], mg: [0.0075, 0.0065], knife: [0, 0] };
+  const KICK_W = { deagle: [0.072, 0.014], ak47: [0.0128, 0.0062], m4a1: [0.0088, 0.0042], famas: [0.0092, 0.0045], galil: [0.011, 0.0055], aug: [0.0085, 0.004], sg552: [0.009, 0.0042], awp: [0.085, 0.01], scout: [0.045, 0.006], p90: [0.0062, 0.0042], usp: [0.019, 0.005] };
+  const WEAPONS = WLIST.map((w, i) => {
+    const o = Object.assign({}, WDEF, w, { id: i });
+    const k = 0.75 * 0.95 * 1.1; o.spread *= k; o.mspread *= k * 0.7; o.sspread *= k; o.recoil *= k;
+    if (o.cat === 'sniper') { o.spread *= 0.8; o.mspread *= 0.8; o.sspread *= 0.8; } // снайперки точнее на 20%
+    // дальность: пуля долетает через всю карту (кроме дробовиков и ножа)
+    if (o.cat === 'rifle' || o.cat === 'mg') o.range = 2600; else if (o.cat === 'sniper') o.range = 3200; else if (o.cat === 'pistol' || o.cat === 'dual' || o.cat === 'smg') o.range = Math.max(o.range, 1900);
+    o.acc = w.acc ?? (o.cat === 'shotgun' ? o.spread : o.cat === 'sniper' ? o.spread : ACC[o.cat]);
+    if (w.key === 'deagle') o.acc = 0.004;
+    [o.kick, o.kickH] = KICK_W[w.key] || KICK[o.cat];
+    return o;
+  });
   const WKEY = {}; WEAPONS.forEach((w) => (WKEY[w.key] = w.id));
+  // Разброс пули (радианы). o: {spd 0..1, og, cr, scoped}
+  function inaccuracy(w, o) {
+    if (w.cat === 'knife') return 0;
+    const run = Math.max(0, Math.min(1, (o.spd - 0.2) / 0.7));
+    let a;
+    if (w.scope === 2) a = o.scoped ? w.sspread + w.mspread * 0.6 * run : w.spread + w.mspread * 0.5 * run;
+    else {
+      a = w.acc + (w.mspread - w.acc) * run;
+      if (w.cat === 'shotgun') a = w.spread + w.mspread * 0.3 * run;
+      if (w.scope === 1 && o.scoped) a *= 0.6;
+    }
+    if (!o.og) a = Math.max(a, w.mspread * 1.4);
+    else if (o.cr) a *= 0.65;
+    return a;
+  }
 
   // ---------- Скины ----------
   // hitR — радиус попадания. У женских скинов он меньше.
@@ -509,6 +648,19 @@
     { w: 'knife', model: 'machete', name: 'Глитч', r: 5, case: 4, p: 'comic', c: ['#00e5ff', '#ff1744', '#ffea00'] },
     { w: 'knife', model: 'flip', name: 'Синтвейв', r: 5, case: 4, p: 'fade', c: ['#ff00e5', '#7c4dff', '#00e5ff'] },
     { w: 'knife', model: 'butterfly', name: 'Хром', r: 5, case: 4, p: 'chrome', c: ['#f5f5f5', '#9e9e9e', '#ffffff'] },
+    // перчатки (редкий особый, как ножи)
+    { w: 'gloves', model: 'sport', name: 'Пандора', r: 5, case: 0, p: 'sport', c: ['#5b2a86', '#121214', '#f2c94c'] },
+    { w: 'gloves', model: 'driver', name: 'Королевский', r: 5, case: 0, p: 'driver', c: ['#1e2a5a', '#c9a227', '#0e1430'] },
+    { w: 'gloves', model: 'wraps', name: 'Арктика', r: 5, case: 1, p: 'wraps', c: ['#e8eef2', '#7fb2e5', '#2a3440'] },
+    { w: 'gloves', model: 'moto', name: 'Полярные', r: 5, case: 1, p: 'moto', c: ['#dfe7ec', '#1f6feb', '#15171a'] },
+    { w: 'gloves', model: 'hydra', name: 'Изумруд', r: 5, case: 2, p: 'hydra', c: ['#0f5132', '#29d17d', '#062616'] },
+    { w: 'gloves', model: 'specialist', name: 'Багровое кимоно', r: 5, case: 2, p: 'specialist', c: ['#8b1a1a', '#151515', '#e5c07b'] },
+    { w: 'gloves', model: 'sport', name: 'Вайс', r: 5, case: 2, p: 'sport', c: ['#ff4fa3', '#1fd1f9', '#121214'] },
+    { w: 'gloves', model: 'driver', name: 'Туманность', r: 5, case: 3, p: 'driver', c: ['#22104a', '#b388ff', '#0b0620'] },
+    { w: 'gloves', model: 'specialist', name: 'Градиент', r: 5, case: 3, p: 'specialist', c: ['#ff3d8b', '#7c5cff', '#1fd1f9'] },
+    { w: 'gloves', model: 'sport', name: 'Сверхпроводник', r: 5, case: 4, p: 'sport', c: ['#1f6feb', '#e6edf3', '#0d1117'] },
+    { w: 'gloves', model: 'moto', name: 'Неон', r: 5, case: 4, p: 'moto', c: ['#05050f', '#00e5ff', '#ff00e5'] },
+    { w: 'gloves', model: 'hydra', name: 'Кибер', r: 5, case: 4, p: 'hydra', c: ['#020617', '#22d3ee', '#a855f7'] },
   ];
   const FINISHES = FLIST.map((f, i) => Object.assign({ id: i, model: null }, f));
   const CASES = [
@@ -519,7 +671,8 @@
     { key: 'cyber', name: 'Кейс «Кибер»', price: 7500, color: '#00acc1' },
   ];
   const KNIVES = { default: 'Нож', m9: 'Штык-нож M9', butterfly: 'Нож-бабочка', flip: 'Складной нож', bear: 'Медвежий нож', machete: 'Мачете', katana: 'Катана', karambit: 'Керамбит' };
-  function itemName(f) { return f.w === 'knife' ? `★ ${KNIVES[f.model] || 'Нож'} | ${f.name}` : `${(WEAPONS[WKEY[f.w]] || {}).name} | ${f.name}`; }
+  const GLOVES = { sport: 'Спортивные перчатки', driver: 'Водительские перчатки', wraps: 'Обмотки', moto: 'Мотоперчатки', specialist: 'Перчатки специалиста', hydra: 'Перчатки «Гидра»' };
+  function itemName(f) { return f.w === 'knife' ? `★ ${KNIVES[f.model] || 'Нож'} | ${f.name}` : f.w === 'gloves' ? `★ ${GLOVES[f.model]} | ${f.name}` : `${(WEAPONS[WKEY[f.w]] || {}).name} | ${f.name}`; }
   function rollCase(ci, rnd) {
     const items = FINISHES.filter((f) => f.case === ci);
     let x = (rnd || Math.random)(), tier = 1;
@@ -538,7 +691,7 @@
   function dirFrom(yaw, pitch) { const cp = Math.cos(pitch); return [Math.cos(yaw) * cp, Math.sin(yaw) * cp, Math.sin(pitch)]; }
   const MAPS = DEFS.map(buildMap);
 
-  const api = { C, MAPS, WEAPONS, WKEY, SKINS, SKEY, FINISHES, CASES, RARITY, KNIVES, itemName, rollCase, finishFits, colAt, walkable, isWall, collides, groundAt, ceilAt, move, moveDir, step, ray3, hitPlayer, rampSurf, speedOf, dirFrom };
+  const api = { C, MT, MAPS, WEAPONS, WKEY, SKINS, SKEY, FINISHES, CASES, RARITY, KNIVES, GLOVES, itemName, rollCase, finishFits, inaccuracy, floorOf, floorAt, colAt, walkable, isWall, collides, groundAt, ceilAt, move, moveDir, step, ray3, hitPlayer, rampSurf, speedOf, dirFrom };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Shared = api;
 })(this);

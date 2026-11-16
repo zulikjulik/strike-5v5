@@ -1,7 +1,7 @@
 // Звуки оружия (синтез: щелчок + тело выстрела + низкий удар + эхо) и фоновая музыка.
 (function () {
   const { WEAPONS } = Shared;
-  let ctx = null, master, sfxBus, musicBus, verb, verbIn, noiseBuf;
+  let ctx = null, master, sfxBus, musicBus, verb, verbIn, noiseBuf, echoIn;
   const vol = { sfx: 0.8, music: 0.4 };
   let musicOn = true, inGame = false;
 
@@ -48,6 +48,9 @@
     verb = ctx.createConvolver(); verb.buffer = makeIR(1.8, 3);
     verbIn = ctx.createGain(); verbIn.gain.value = 1; verbIn.connect(verb);
     const verbOut = ctx.createGain(); verbOut.gain.value = 0.5; verb.connect(verbOut); verbOut.connect(sfxBus);
+    // эхо (отражение от зданий): задержка с обратной связью и фильтром
+    echoIn = ctx.createGain(); const dl = ctx.createDelay(1); dl.delayTime.value = 0.21; const fb = ctx.createGain(); fb.gain.value = 0.32; const elp = ctx.createBiquadFilter(); elp.type = 'lowpass'; elp.frequency.value = 1600;
+    const eo = ctx.createGain(); eo.gain.value = 0.42; echoIn.connect(dl); dl.connect(elp); elp.connect(fb); fb.connect(dl); elp.connect(eo); eo.connect(sfxBus);
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     startMusic();
@@ -78,6 +81,7 @@
     out.connect(lp);
     if (pn) { pn.pan.value = Math.max(-1, Math.min(1, pan)); lp.connect(pn); pn.connect(sfxBus); } else lp.connect(sfxBus);
     const send = ctx.createGain(); send.gain.value = P.tail * (0.6 + (1 - k) * 0.8); lp.connect(send); send.connect(verbIn);
+    const es = ctx.createGain(); es.gain.value = w.sil ? 0.05 : P.tail * 0.9; lp.connect(es); es.connect(echoIn);
     const det = 0.94 + Math.random() * 0.12;
     // 1) щелчок
     const n1 = noise(t, 0.04), hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = P.crack * det;
@@ -90,6 +94,9 @@
     o.frequency.setValueAtTime(P.thump * 1.8 * det, t); o.frequency.exponentialRampToValueAtTime(P.thump * 0.45, t + P.td);
     const g3 = ctx.createGain(); env(g3, t, 1.1, 0.002, P.td); o.connect(g3); g3.connect(out);
     o.start(t); o.stop(t + P.td + 0.05);
+    // низкий «бум» вблизи и механика затвора
+    if (!w.sil && k > 0.35) { const ob = ctx.createOscillator(); ob.type = 'sine'; ob.frequency.setValueAtTime(P.thump * 0.7, t); ob.frequency.exponentialRampToValueAtTime(32, t + P.td * 2.2); const gb = ctx.createGain(); env(gb, t, 0.9 * k, 0.003, P.td * 2.2); ob.connect(gb); gb.connect(out); ob.start(t); ob.stop(t + P.td * 2.4); }
+    if (distPx < 40) { click(1300 * det, 0.22, 0.012); click(2400 * det, 0.12, 0.03); }
     if (w.sil) { const n4 = noise(t, 0.12), hp4 = ctx.createBiquadFilter(); hp4.type = 'highpass'; hp4.frequency.value = 3000; const g4 = ctx.createGain(); env(g4, t, 0.35, 0.002, 0.1); n4.connect(hp4); hp4.connect(g4); g4.connect(out); click(2600, 0.25 * v, 0.03); }
     active++; setTimeout(() => active--, (P.dur + 0.1) * 1000);
   }
@@ -114,6 +121,7 @@
     const o = ctx.createOscillator(); o.type = type || 'sine'; o.frequency.value = freq;
     const g = ctx.createGain(); env(g, t, gain, 0.003, dur); o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t + dur + 0.05);
   }
+  const shell = (distM) => { if (!ctx) return; const a = Math.max(0, 1 - distM / 14); if (a <= 0) return; const t = ctx.currentTime, f = 3200 + Math.random() * 2600; for (const [ff, d] of [[f, 0], [f * 1.48, 0.004]]) { const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = ff; const g = ctx.createGain(); env(g, t + d, 0.05 * a, 0.001, 0.08); o.connect(g); g.connect(sfxBus); o.start(t + d); o.stop(t + d + 0.12); } };
   const reloadStart = () => { click(2400, 0.5); click(900, 0.35, 0.08); };
   const reloadEnd = () => { click(3200, 0.5); click(1800, 0.45, 0.09); };
   const dry = () => click(4000, 0.4);
@@ -187,7 +195,7 @@
   }
 
   window.Sfx = {
-    init, shot, whoosh, step3, bolt, inspect, flick, reloadStart, reloadEnd, dry, hit, killDing, deploy, buy, uiClick, step,
+    init, shot, whoosh, shell, step3, bolt, inspect, flick, reloadStart, reloadEnd, dry, hit, killDing, deploy, buy, uiClick, step,
     setVolume(kind, v) { vol[kind] = v; if (!ctx) return; if (kind === 'sfx') sfxBus.gain.value = v; else applyMusicVol(); },
     setInGame(v) { inGame = v; applyMusicVol(); },
     toggleMusic() { musicOn = !musicOn; applyMusicVol(); return musicOn; },
