@@ -21,6 +21,7 @@ const server = http.createServer((req, res) => {
   if (p === '/health') { res.writeHead(200); return res.end('ok'); }
   let fp;
   if (p === '/three.module.js') fp = THREE_PATH;
+  else if (p.startsWith('/addons/')) { const base = path.join(__dirname, 'node_modules', 'three', 'examples', 'jsm'); fp = path.join(base, path.normalize(p.slice(8))); if (!fp.startsWith(base)) { res.writeHead(403); return res.end(); } }
   else { fp = path.join(PUBLIC, path.normalize(p)); if (!fp.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); } }
   fs.readFile(fp, (err, data) => {
     if (err) { res.writeHead(404); return res.end('Not found'); }
@@ -100,7 +101,7 @@ class Room {
       loadout: o.loadout, nextLoadout: null, fin: o.fin || {}, weapons: o.loadout.slice(), slot: 1,
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, og: true, cr: false, spd: 0, mv: 0, heavy: false, angle: 0, pitch: 0, hp: C.HP, alive: false, respawnAt: 0,
       ammo: [0, 0, 0], reloadUntil: 0, switchUntil: 0, lastShot: 0, kills: 0, deaths: 0,
-      queue: [], lastSeq: 0, fire: false, prevF: false, edgeAt: 0, moving: false, scoped: false, scopedAt: 0, spray: 0, rt: 0,
+      queue: [], lastSeq: 0, fire: false, prevF: false, edgeAt: 0, moving: false, scoped: false, scopedAt: 0, spray: 0, rt: 0, wantSpawn: false, chatAt: 0,
       hist: [],
       path: null, repathAt: 0, tgtId: null, seenAt: 0, strafeDir: 1, strafeUntil: 0, stuck: 0, aimJitter: 0,
     };
@@ -124,9 +125,9 @@ class Room {
       if (near > best) { best = near; pick = s; }
     }
     p.x = (pick[0] + 0.5) * C.TILE + (Math.random() - 0.5) * 14; p.y = (pick[1] + 0.5) * C.TILE + (Math.random() - 0.5) * 14;
-    p.z = S.groundAt(map, p.x, p.y, C.R, 200); p.vx = 0; p.vy = 0; p.vz = 0; p.og = true; p.cr = false; p.spd = 0; p.mv = 0;
+    p.z = S.groundAt(map, p.x, p.y, C.R, 40); p.vx = 0; p.vy = 0; p.vz = 0; p.og = true; p.cr = false; p.spd = 0; p.mv = 0;
     p.angle = p.team === 'A' ? 0 : Math.PI; p.pitch = 0;
-    p.hp = C.HP; p.alive = true; p.reloadUntil = 0; p.switchUntil = 0; p.queue.length = 0;
+    p.hp = C.HP; p.alive = true; p.wantSpawn = false; p.reloadUntil = 0; p.switchUntil = 0; p.queue.length = 0;
     p.scoped = false; p.spray = 0; p.hist = [];
     p.path = null; p.tgtId = null; p.spawnProtect = Date.now() + 1500; p.stuck = 0;
   }
@@ -235,15 +236,14 @@ class Room {
       return;
     }
     p.ammo[p.slot]--;
-    const scoped = (p.scoped || now - p.scopedAt < 200) && w.scope;
-    let base = scoped ? w.sspread : p.spd > 0.55 ? w.mspread : w.spread;
-    if (!p.og) base = Math.max(base, w.mspread * 1.5);
-    else if (p.cr) base *= 0.75;
-    base += p.spray;
-    if (p.bot) base = base * 1.6 + 0.012;
-    p.spray = Math.min(0.06, p.spray + w.recoil);
+    const scoped = !!((p.scoped || now - p.scopedAt < 200) && w.scope);
+    // разброс: стоя пуля идёт почти точно в прицел; отдачу игрок видит как подброс прицела
+    let base = S.inaccuracy(w, { spd: p.spd, og: p.og, cr: p.cr, scoped });
+    if (w.cat !== 'shotgun' && w.cat !== 'sniper') base += p.spray * 0.18;
+    if (p.bot) base = base * 1.5 + 0.02 + p.spray * 0.5;
+    p.spray = Math.min(0.12, p.spray + w.kick);
     for (let i = 0; i < w.pellets; i++) {
-      const yaw = p.angle + gauss() * base, pitch = p.pitch + gauss() * base * 0.8 + p.spray * 0.5;
+      const yaw = p.angle + gauss() * base, pitch = p.pitch + gauss() * base * 0.8 + (p.bot ? p.spray * 0.3 : 0);
       const tr = this.traceShot(p, yaw, pitch, w, tk);
       let endT = tr.wall.t, flag = tr.wall.n ? 0 : 2, nrm = tr.wall.n;
       let dmg = w.dmg;
@@ -269,9 +269,9 @@ class Room {
     if (q.hp <= 0) this.kill(p, q, now, wid, head);
   }
   kill(killer, victim, now, wid, head) {
-    victim.alive = false; victim.hp = 0; victim.respawnAt = now + C.RESPAWN_MS; victim.deaths++;
+    victim.alive = false; victim.hp = 0; victim.respawnAt = now + (victim.bot ? C.RESPAWN_MS : 1500); victim.deaths++; victim.wantSpawn = false; victim.diedAt = now;
     if (killer !== victim) { killer.kills++; this.score[killer.team]++; }
-    this.events.push({ t: 'kill', k: killer.id, v: victim.id, kn: killer.name, vn: victim.name, kt: killer.team, vt: victim.team, w: wid, hs: head ? 1 : 0 });
+    this.events.push({ t: 'kill', k: killer.id, v: victim.id, kn: killer.name, vn: victim.name, kt: killer.team, vt: victim.team, w: wid, hs: head ? 1 : 0, kx: Math.round(killer.x), ky: Math.round(killer.y) });
   }
 
   findPath(fromX, fromY, goal) {
@@ -284,9 +284,11 @@ class Room {
     for (let i = 0; i < q.length; i++) {
       const cur = q[i]; if (cur === end) break;
       const cx = cur % W, cy = (cur / W) | 0;
+      const fc = Math.max(0, S.floorAt(map, cx, cy));
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const nx = cx + dx, ny = cy + dy;
-        if (S.isWall(map, nx, ny)) continue;
+        const fn = S.floorAt(map, nx, ny);
+        if (fn < 0 || fn - fc > 30) continue;
         const ni = ny * W + nx; if (prev[ni] !== -1) continue;
         prev[ni] = cur; q.push(ni);
       }
@@ -344,8 +346,13 @@ class Room {
       }
       if (b.path.length) {
         const [nx, ny] = b.path[0];
-        if (Math.hypot(nx - b.x, ny - b.y) < 8) b.path.shift();
-        else { const a = Math.atan2(ny - b.y, nx - b.x); mx = Math.cos(a); my = Math.sin(a); }
+        const d = Math.hypot(nx - b.x, ny - b.y);
+        if (d < 8 || (d < 26 && Math.abs(b.z - S.floorAt(map, Math.floor(nx / C.TILE), Math.floor(ny / C.TILE))) <= C.STEP && Math.floor(nx / C.TILE) === Math.floor(b.x / C.TILE) && Math.floor(ny / C.TILE) === Math.floor(b.y / C.TILE))) b.path.shift();
+        else {
+          const a = Math.atan2(ny - b.y, nx - b.x); mx = Math.cos(a); my = Math.sin(a);
+          const fz = S.floorAt(map, Math.floor(nx / C.TILE), Math.floor(ny / C.TILE));
+          if (b.og && fz > b.z + C.STEP && d < 46) jump = true;
+        }
         if (mx || my) b.angle += Math.max(-0.2, Math.min(0.2, angDiff(b.angle, Math.atan2(my, mx))));
         b.pitch *= 0.8;
       }
@@ -366,7 +373,7 @@ class Room {
     this.tick++;
     if (this.state === 'play') {
       for (const p of this.players.values()) {
-        if (!p.alive) { if (now >= p.respawnAt) this.spawn(p); continue; }
+        if (!p.alive) { if (now >= p.respawnAt && (p.bot || p.wantSpawn || now - p.diedAt > 30000)) this.spawn(p); continue; }
         if (p.bot) this.botThink(p, now);
         else {
           if (p.queue.length > 8) p.queue.splice(0, p.queue.length - 8);
@@ -427,7 +434,7 @@ class Room {
     for (const p of this.players.values()) {
       if (p.bot || !p.client) continue;
       const w = this.curW(p);
-      const msg = Object.assign({}, base, { me: { id: p.id, seq: p.lastSeq, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, og: p.og ? 1 : 0, cr: p.cr ? 1 : 0, slot: p.slot, wpn: p.weapons, ammo: p.ammo[p.slot], mag: w.mag, rl: p.reloadUntil ? Math.max(0, p.reloadUntil - now) : 0, sw: Math.max(0, p.switchUntil - now), ri: p.alive ? 0 : Math.max(0, p.respawnAt - now) } });
+      const msg = Object.assign({}, base, { me: { id: p.id, seq: p.lastSeq, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, og: p.og ? 1 : 0, cr: p.cr ? 1 : 0, slot: p.slot, wpn: p.weapons, ammo: p.ammo[p.slot], mag: w.mag, rl: p.reloadUntil ? Math.max(0, p.reloadUntil - now) : 0, sw: Math.max(0, p.switchUntil - now), ri: p.alive ? 0 : Math.max(0, p.respawnAt - now), ws: p.wantSpawn ? 1 : 0 } });
       if (roster) msg.r = roster;
       p.client.send(msg);
     }
@@ -479,6 +486,16 @@ wss.on('connection', (ws) => {
       case 'leave': leave(); client.send({ t: 'left' }); break;
       case 'in': if (client.me) client.me.queue.push(msg); break;
       case 'lo': if (client.me) { client.me.nextLoadout = validLoadout(msg.lo); client.me.fin = validFin(msg.fin); } break;
+      case 'spawn': if (client.me && !client.me.alive) { const me = client.me; if (msg.lo) me.nextLoadout = validLoadout(msg.lo); if (msg.fin) me.fin = validFin(msg.fin); me.wantSpawn = true; } break;
+      case 'chat': {
+        const me = client.me, r = client.room; if (!me || !r) break;
+        const text = clean(msg.text, 120); const now = Date.now();
+        if (!text || now - me.chatAt < 700) break;
+        me.chatAt = now;
+        const out = { t: 'chat', id: me.id, n: me.name, tm: me.team === 'A' ? 0 : 1, s: text, team: msg.team ? 1 : 0, dead: me.alive ? 0 : 1 };
+        for (const q of r.humans()) if (q.client && (!msg.team || q.team === me.team)) q.client.send(out);
+        break;
+      }
       case 'ping': client.send({ t: 'pong', c: msg.c }); break;
       case 'hello': client.uid = clean(msg.uid, 40); if (client.uid) payout(client.uid); break;
       case 'market': client.send({ t: 'market', list: marketList() }); break;
