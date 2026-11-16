@@ -346,6 +346,8 @@ $('admGo').onclick = () => { save.adminPass = $('admPass').value; persist(); $('
 $('admSayGo').onclick = () => { const t = $('admSay').value.trim(); if (t) { send({ t: 'adm', cmd: 'say', text: t }); $('admSay').value = ''; } };
 $('admMoney').onclick = () => { if (!isAdmin) return; addMoney(10000); toast('+$10 000'); };
 $('admUnlock').onclick = () => { if (!isAdmin) return; save.ownedW = WEAPONS.map((w) => w.key); save.ownedS = SKINS.map((s) => s.key); persist(); fillSelects(); toast('Всё оружие и персонажи открыты'); };
+$('admKnives').onclick = () => { if (!isAdmin) return; let n = 0; for (const f of FINISHES) if (f.w === 'knife' && !(save.inv[f.id] > 0)) { save.inv[f.id] = 1; n++; } persist(); buildInventory(); refreshPreview(); toast(n ? `Выдано ножей: ${n}` : 'Все ножи уже есть'); };
+$('admSkins').onclick = () => { if (!isAdmin) return; let n = 0; for (const f of FINISHES) if (!(save.inv[f.id] > 0)) { save.inv[f.id] = 1; n++; } persist(); buildInventory(); refreshPreview(); toast(n ? `Выдано скинов: ${n}` : 'Все скины уже есть'); };
 $('admFree').onclick = () => { if (!isAdmin) return; save.freeCases = !save.freeCases; persist(); renderAdmin(); };
 function renderAdmin() {
   $('admLogin').classList.toggle('hidden', isAdmin); $('admBody').classList.toggle('hidden', !isAdmin);
@@ -708,9 +710,9 @@ function buildVM(force) {
   }
   vmPivot.traverse((o) => { o.frustumCulled = false; });
 }
-const VM_BASE = { pistol: [0.13, -0.13, -0.3], dual: [0.13, -0.13, -0.3], knife: [0.11, -0.1, -0.2], smg: [0.12, -0.13, -0.26], rifle: [0.11, -0.125, -0.22], shotgun: [0.11, -0.125, -0.22], sniper: [0.11, -0.12, -0.18], mg: [0.12, -0.14, -0.22] };
-const KNIFE_ROT = [0.45, 0.3, -0.35]; // наклон клинка вверх, к центру и разворот кисти
-const KS = [1.5]; // масштаб ножа в руке
+const VM_BASE = { pistol: [0.13, -0.13, -0.3], dual: [0.13, -0.13, -0.3], knife: [0.13, -0.12, -0.3], smg: [0.12, -0.13, -0.26], rifle: [0.11, -0.125, -0.22], shotgun: [0.11, -0.125, -0.22], sniper: [0.11, -0.12, -0.18], mg: [0.12, -0.14, -0.22] };
+const KNIFE_ROT = [1.2, 0.18, -0.12]; // нож стоит вертикально: клинок вверх, лёгкий наклон к центру
+const KS = [1.1]; // масштаб ножа в руке
 const ease = (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 const bump = (t) => Math.sin(Math.max(0, Math.min(1, t)) * Math.PI);
 let vmPhase = 0, adsK = 0;
@@ -728,8 +730,9 @@ function updateVM(now, dt) {
   swayX *= 0.85; swayY *= 0.85; kick *= Math.pow(0.0008, dt);
   let x = b[0] + Math.sin(vmPhase) * 0.012 * sp * (1 - adsK) - swayX, y = b[1] - Math.abs(Math.cos(vmPhase)) * 0.01 * sp * (1 - adsK) + swayY - (pred.cr ? 0.01 : 0), z = b[2] + kick * 0.07;
   let rx = kick * 0.18, ry = 0, rz = 0;
-  vmPivot.scale.setScalar(knife ? KS[0] : 1);
-  if (knife) { rx += KNIFE_ROT[0]; ry += KNIFE_ROT[1]; rz += KNIFE_ROT[2]; if (u.knife === 'katana' || u.knife === 'machete') { x += 0.03; y -= 0.02; z += 0.04; } }
+  const longK = u.knife === 'katana' || u.knife === 'machete';
+  vmPivot.scale.setScalar(knife ? KS[0] * (u.knife === 'katana' ? 0.8 : u.knife === 'machete' ? 0.9 : 1) : 1);
+  if (knife) { rx += KNIFE_ROT[0]; ry += KNIFE_ROT[1]; rz += KNIFE_ROT[2]; if (longK) { x += 0.02; y -= 0.03; } }
   // сброс подвижных частей
   if (u.mag) u.mag.position.copy(u.magHome);
   if (u.slide) { u.slide.position.copy(u.slideHome); u.slide.rotation.set(0, 0, 0); }
