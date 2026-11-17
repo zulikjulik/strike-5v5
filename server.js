@@ -252,12 +252,13 @@ class Room {
         if (!w.pierce) { endT = targets[0].t; flag = 1; }
         for (const h of targets) {
           const fall = w.cat === 'shotgun' ? Math.max(0.35, 1 - h.t / w.range) : 1;
-          this.damage(p, h.q, dmg * fall * (h.head ? C.HEAD_MULT : 1), wid, now, h.head);
+          this.damage(p, h.q, S.hitDamage(w, dmg * fall, h.head), wid, now, h.head);
           if (w.pierce) dmg *= 0.85;
         }
       }
       const nn = nrm ? (nrm[2] > 0.5 ? 5 : nrm[2] < -0.5 ? 6 : nrm[0] > 0.3 ? 1 : nrm[0] < -0.3 ? 2 : nrm[1] > 0.3 ? 3 : 4) : 0;
-      this.shots.push([Math.round(p.x), Math.round(p.y), Math.round(tr.oz), Math.round(p.x + tr.dx * endT), Math.round(p.y + tr.dy * endT), Math.round(tr.oz + tr.dz * endT), nn, flag, wid, p.id, i === 0 ? 1 : 0, targets[0] && targets[0].head ? 1 : 0]);
+      const r1 = (v) => Math.round(v * 10) / 10;
+      this.shots.push([Math.round(p.x), Math.round(p.y), Math.round(tr.oz), r1(p.x + tr.dx * endT), r1(p.y + tr.dy * endT), r1(tr.oz + tr.dz * endT), nn, flag, wid, p.id, i === 0 ? 1 : 0, targets[0] && targets[0].head ? 1 : 0]);
       if (w.pierce) for (const h of targets) this.shots.push([0, 0, 0, Math.round(p.x + tr.dx * h.t), Math.round(p.y + tr.dy * h.t), Math.round(tr.oz + tr.dz * h.t), 0, 3, wid, p.id, 0, h.head ? 1 : 0]);
     }
     if (w.scope === 2) { p.scoped = false; p.scopedAt = 0; }
