@@ -34,7 +34,56 @@ const KIND = {
   leather: { metalness: 0.0, roughness: 0.55 },
 };
 const matCache = {};
-export function kindMat(k) { return matCache[k] || (matCache[k] = new THREE.MeshStandardMaterial(Object.assign({ vertexColors: true }, KIND[k] || KIND.poly))); }
+// Шум для микродеталей поверхности (царапины, зерно, потертости) — без UV, по координатам модели
+let detailT = null;
+function detailTex() {
+  if (detailT) return detailT;
+  const N = 256, c = document.createElement('canvas'); c.width = c.height = N; const g = c.getContext('2d'), im = g.createImageData(N, N), d = im.data;
+  const base = new Float32Array(N * N);
+  // value noise из нескольких октав (бесшовный)
+  for (const [cell, amp] of [[32, 0.5], [16, 0.25], [8, 0.15], [4, 0.1]]) {
+    const n = N / cell, grid = []; for (let i = 0; i < n * n; i++) grid.push(Math.random());
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const gx = x / cell, gy = y / cell, x0 = Math.floor(gx), y0 = Math.floor(gy), fx = gx - x0, fy = gy - y0, sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+      const v = (a, b) => grid[((b % n + n) % n) * n + ((a % n + n) % n)];
+      base[y * N + x] += amp * ((v(x0, y0) * (1 - sx) + v(x0 + 1, y0) * sx) * (1 - sy) + (v(x0, y0 + 1) * (1 - sx) + v(x0 + 1, y0 + 1) * sx) * sy);
+    }
+  }
+  for (let i = 0; i < N * N; i++) { const grain = Math.random(); d[i * 4] = base[i] * 255; d[i * 4 + 1] = grain * 255; d[i * 4 + 2] = 0; d[i * 4 + 3] = 255; }
+  g.putImageData(im, 0, 0);
+  // царапины в синем канале
+  g.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 70; i++) { g.strokeStyle = `rgba(0,0,${(40 + Math.random() * 90) | 0},1)`; g.lineWidth = Math.random() < 0.8 ? 0.6 : 1.4; g.beginPath(); const x = Math.random() * N, y = Math.random() * N, a = Math.random() * 6.28, l = 6 + Math.random() * 30; g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke(); }
+  detailT = new THREE.CanvasTexture(c); detailT.wrapS = detailT.wrapT = THREE.RepeatWrapping; detailT.colorSpace = THREE.NoColorSpace;
+  return detailT;
+}
+// kind: 0 металл (шлифовка вдоль ствола), 1 полимер/резина (зерно), 2 дерево (волокна), 3 раскраска (лёгкий износ)
+const DETAIL = { steel: 0, dark: 0, alu: 0, brass: 0, blade: 0, poly: 1, rubber: 1, cloth: 1, leather: 1, skin: 1, wood: 2 };
+export function addDetail(m, kind, amt = 1) {
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.tDet = { value: detailTex() };
+    sh.vertexShader = 'varying vec3 vDP; varying vec3 vDN;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vDP = position; vDN = normal;');
+    sh.fragmentShader = 'uniform sampler2D tDet; varying vec3 vDP; varying vec3 vDN;\n' + sh.fragmentShader
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        vec3 dW = pow(abs(normalize(vDN)), vec3(4.0)); dW /= dW.x + dW.y + dW.z;
+        vec3 dP = vDP * 14.0;
+        ${kind === 0 ? 'vec4 det = texture2D(tDet, vec2(dP.y * 3.0, dP.z * 0.25)) * dW.x + texture2D(tDet, vec2(dP.x * 3.0, dP.z * 0.25)) * dW.y + texture2D(tDet, dP.xy * 1.5) * dW.z;'
+        : kind === 2 ? 'vec4 det = texture2D(tDet, vec2(dP.y * 0.6 + dP.x * 0.6, dP.z * 0.05)); det.r = det.r * 0.6 + 0.4 * fract(dP.y * 3.0 + det.r * 4.0);'
+        : 'vec4 det = texture2D(tDet, dP.yz * 2.0) * dW.x + texture2D(tDet, dP.xz * 2.0) * dW.y + texture2D(tDet, dP.xy * 2.0) * dW.z;'}
+        float dAmt = ${amt.toFixed(2)};
+        diffuseColor.rgb *= 1.0 + dAmt * ((det.r - 0.5) * ${kind === 2 ? '0.55' : '0.28'} + (det.g - 0.5) * ${kind === 1 ? '0.12' : '0.05'});
+        ${kind === 3 ? 'diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.63, 0.65), smoothstep(0.62, 0.8, det.r) * 0.35 + det.b * 0.5);' : 'diffuseColor.rgb += det.b * 0.18 * dAmt;'}`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        roughnessFactor = clamp(roughnessFactor * (0.75 + det.r * 0.6 - det.b * 0.4), 0.04, 1.0);`);
+  };
+  m.customProgramCacheKey = () => 'det' + kind + amt;
+  return m;
+}
+export function kindMat(k) {
+  if (matCache[k]) return matCache[k];
+  const m = new THREE.MeshStandardMaterial(Object.assign({ vertexColors: true }, KIND[k] || KIND.poly));
+  return (matCache[k] = addDetail(m, DETAIL[k] ?? 1));
+}
 const glassMat = new THREE.MeshPhysicalMaterial({ color: 0x223a5a, metalness: 0.2, roughness: 0.04, transparent: true, opacity: 0.55, clearcoat: 1 });
 
 // Геометрии-заготовки
@@ -102,6 +151,9 @@ export function finishMaterial(fid) {
   const P = { gold: [1, 0.18, 1], chrome: [1, 0.05, 1], doppler: [0.75, 0.16, 1], fade: [0.55, 0.22, 1], marble: [0.4, 0.2, 1], carbon: [0.35, 0.32, 0.6], neon: [0.2, 0.35, 0.8], lava: [0.2, 0.5, 0.3], circuit: [0.3, 0.35, 0.7], galaxy: [0.35, 0.25, 1], dragon: [0.3, 0.3, 0.8], comic: [0.05, 0.45, 0.6] }[f.p] || [0.15, 0.48, 0.3];
   const m = new THREE.MeshPhysicalMaterial({ map: t, metalness: P[0], roughness: P[1], clearcoat: P[2], clearcoatRoughness: 0.12 });
   if (f.p === 'neon' || f.p === 'lava' || f.p === 'circuit' || f.p === 'galaxy') { m.emissiveMap = t; m.emissive = new THREE.Color(0xffffff); m.emissiveIntensity = f.p === 'galaxy' ? 0.3 : 0.6; }
+  // рельеф узора и лёгкий износ краски по краям/царапинам (кроме зеркальных)
+  m.bumpMap = t; m.bumpScale = 0.6;
+  if (!(f.p === 'chrome' || f.p === 'gold' || f.p === 'doppler')) addDetail(m, 3, 0.8);
   return (finCache[fid] = m);
 }
 
@@ -733,12 +785,21 @@ export function makeVMHands(w, gun, s, gloveFid) {
   G.traverse((o) => { o.frustumCulled = false; });
   return G;
 }
-// Модель перчаток для карточек в меню
+// Модель перчаток для карточек в меню: две кисти крупно, без рукавов
 export function makeGloveModel(fid) {
-  const s = { skin: '#d9a77c', shirt: '#2b3440' };
+  const f = FINISHES[fid], gm = gloveMaterial(fid), skinM = new THREE.MeshStandardMaterial({ color: 0xd9a77c, roughness: 0.6 });
+  const fingM = f && f.model === 'wraps' ? skinM : gm;
+  const cuffM = new THREE.MeshStandardMaterial({ color: f ? f.c[f.model === 'sport' ? 2 : 1] : '#333', roughness: 0.7 });
   const g = new THREE.Group();
-  const h = makeVMHands({ cat: 'knife' }, { userData: {} }, s, fid);
-  h.rotation.set(0.2, -0.4, 0); g.add(h);
+  for (const side of [-1, 1]) {
+    const h = gripHand(false), hg = new THREE.Group();
+    hg.add(new THREE.Mesh(merge(h.palm), gm), new THREE.Mesh(merge(h.fing), fingM));
+    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.033, 0.05, 16), f && (f.model === 'sport' || f.model === 'specialist' || f.model === 'moto') ? cuffM : gm);
+    cuff.position.set(0.024, 0.03, 0.07); cuff.rotation.x = Math.PI / 2 - 0.4; hg.add(cuff);
+    if (f && f.model === 'moto') { const kn = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.07, 0.03), cuffM); kn.position.set(0.032, -0.02, -0.012); hg.add(kn); }
+    hg.position.set(side * 0.05, 0, 0); hg.rotation.set(0.3, side < 0 ? 0.5 : -0.5 + Math.PI, 0); if (side > 0) hg.scale.x = -1;
+    g.add(hg);
+  }
   return g;
 }
 
@@ -746,7 +807,63 @@ export function makeGloveModel(fid) {
 // Персонаж: округлые формы (эллипсоиды и сужающиеся «кости»), колени, анимация смерти
 // ---------------------------------------------------------------------
 const VCOLM = new THREE.MeshLambertMaterial({ vertexColors: true });
-function cm(parts) { const m = new THREE.Mesh(merge(parts), VCOLM); m.castShadow = true; m.receiveShadow = true; return m; }
+// ---- Материалы персонажа: кожа, ткань (камуфляж + плетение по триплану), снаряжение ----
+function camoCanvas(kind) {
+  const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
+  const R = (a, b) => a + Math.random() * (b - a);
+  g.fillStyle = 'rgb(158,158,158)'; g.fillRect(0, 0, 256, 256);
+  const tones = { wood: [96, 120, 200, 70], desert: [130, 190, 205, 110], urban: [110, 190, 215, 80], snow: [200, 215, 150, 225], solid: [] }[kind] || [];
+  // пятна камуфляжа: рваные кляксы из кругов, бесшовно (рисуем со сдвигами)
+  for (let k = 0; k < tones.length; k++) for (let i = 0; i < 14; i++) {
+    const x = R(0, 256), y = R(0, 256), n = 6 + (Math.random() * 6) | 0, v = tones[k];
+    g.fillStyle = `rgb(${v},${v},${v})`;
+    for (let j = 0; j < n; j++) { const px = x + R(-28, 28), py = y + R(-16, 16), r = R(8, 22); for (const ox of [-256, 0, 256]) for (const oy of [-256, 0, 256]) { g.beginPath(); g.ellipse(px + ox, py + oy, r, r * 0.7, R(0, 3), 0, 7); g.fill(); } }
+  }
+  // плетение ткани и потертости
+  const im = g.getImageData(0, 0, 256, 256), d = im.data;
+  for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) { const i = (y * 256 + x) * 4, w = ((x + y) % 4 < 2 ? 6 : -6) + ((x % 3) === 0 ? -4 : 0) + R(-9, 9); d[i] = d[i + 1] = d[i + 2] = Math.max(0, Math.min(255, d[i] + w)); }
+  g.putImageData(im, 0, 0);
+  for (let i = 0; i < 30; i++) { g.fillStyle = `rgba(0,0,0,${R(0.03, 0.08)})`; g.beginPath(); g.ellipse(R(0, 256), R(0, 256), R(10, 40), R(6, 20), R(0, 3), 0, 7); g.fill(); }
+  return c;
+}
+const camoTex = {};
+function getCamo(kind) { if (camoTex[kind]) return camoTex[kind]; const t = new THREE.CanvasTexture(camoCanvas(kind)); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.NoColorSpace; return (camoTex[kind] = t); }
+const triMats = {};
+function triMat(kind, rough, metal, scale, amt) {
+  const k = kind + rough + metal + scale + amt; if (triMats[k]) return triMats[k];
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: rough, metalness: metal, envMapIntensity: 0.25 });
+  if (kind) {
+    const t = getCamo(kind);
+    m.onBeforeCompile = (sh) => {
+      sh.uniforms.tCamo = { value: t };
+      sh.vertexShader = 'varying vec3 vOP; varying vec3 vON;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vOP = position; vON = normal;');
+      sh.fragmentShader = 'uniform sampler2D tCamo; varying vec3 vOP; varying vec3 vON;\n' + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+        vec3 bw = pow(abs(normalize(vON)), vec3(4.0)); bw /= (bw.x + bw.y + bw.z);
+        vec3 P = vOP * ${scale.toFixed(2)};
+        float c = texture2D(tCamo, P.yz).r * bw.x + texture2D(tCamo, P.xz).r * bw.y + texture2D(tCamo, P.xy).r * bw.z;
+        diffuseColor.rgb *= mix(1.0, c * 1.6, ${amt.toFixed(2)});`);
+    };
+    m.customProgramCacheKey = () => 'tri' + k;
+  }
+  return (triMats[k] = m);
+}
+let skinM = null;
+function skinMat() { return skinM || (skinM = new THREE.MeshStandardMaterial({ vertexColors: true, color: 0xd6c2b6, roughness: 0.6, metalness: 0, envMapIntensity: 0.2 })); }
+const CAMO = { recruit: 'wood', desert: 'desert', urban: 'urban', arctic: 'snow', eva: 'wood' };
+let charSkin = null;
+function cm(parts) {
+  if (!charSkin) { const m = new THREE.Mesh(merge(parts), VCOLM); m.castShadow = true; m.receiveShadow = true; return m; }
+  // разбиваем детали по материалу: кожа / ткань / снаряжение
+  const s = charSkin, hx = (c) => new THREE.Color(c).getHex();
+  const skinC = hx(s.skin), cloth = new Set([hx(s.shirt), hx(s.vest), hx(new THREE.Color(s.vest).multiplyScalar(0.7)), hx(new THREE.Color(s.vest).multiplyScalar(0.8))]);
+  if (s.hat === 'cap' || s.hat === 'beanie' || s.hat === 'mask') cloth.add(hx(s.hatColor));
+  const g = { skin: [], cloth: [], gear: [] };
+  for (const p of parts) { const h = hx(p.color); (h === skinC ? g.skin : cloth.has(h) ? g.cloth : g.gear).push(p); }
+  const grp = new THREE.Group();
+  const mats = { skin: skinMat(), cloth: triMat(CAMO[s.key] || 'solid', 0.92, 0, CAMO[s.key] ? 3.2 : 6.0, CAMO[s.key] ? 1 : 0.7), gear: triMat('solid', 0.55, s.key === 'gold' ? 0.6 : 0.12, 7.0, 0.45) };
+  for (const k of ['skin', 'cloth', 'gear']) if (g[k].length) { const m = new THREE.Mesh(merge(g[k]), mats[k]); m.castShadow = true; m.receiveShadow = true; grp.add(m); }
+  return grp;
+}
 function el(out, col, x, y, z, rx, ry, rz, ax = 0, ay = 0, az = 0) { out.push(part(sphG(14, 10), col, x, y, z, rx, ry, rz, ax, ay, az)); }
 function limb(out, col, a, b, ra, rb) { ball(out, a, ra, col); ball(out, b, rb, col); bone(out, a, b, ra, rb, col); }
 function bx3(out, col, w, h, d, x, y, z, rx = 0, ry = 0, rz = 0) { out.push(part(BOXG, col, x, y, z, w, h, d, rx, ry, rz)); }
@@ -754,6 +871,10 @@ const TEAMC = [0x4ea1ff, 0xff5a5a];
 
 export function makeCharacter(skinId, team, wid, fid) {
   const s = SKINS[skinId] || SKINS[0], fem = s.female, tcol = TEAMC[team] ?? 0x888888;
+  charSkin = s;
+  try { return buildCharacter(s, fem, tcol, skinId, team, wid, fid); } finally { charSkin = null; }
+}
+function buildCharacter(s, fem, tcol, skinId, team, wid, fid) {
   const root = new THREE.Group(), fall = new THREE.Group(), tilt = new THREE.Group(), body = new THREE.Group();
   root.add(fall); fall.add(tilt); tilt.add(body);
   body.scale.setScalar(fem ? 0.95 : 1);
@@ -762,11 +883,14 @@ export function makeCharacter(skinId, team, wid, fid) {
   const legs = [], shins = [];
   for (const sx of [-1, 1]) {
     const hip = new THREE.Group(); hip.position.set(sx * 0.1 * sw, 0.92, 0); body.add(hip);
-    const th = []; limb(th, pants, [0, 0, 0], [0, -0.43, -0.01], 0.098 * (fem ? 1.02 : 1), 0.07); el(th, pants, sx * 0.04, -0.2, -0.0, 0.05, 0.075, 0.05); bx3(th, 0x2b2620, 0.06, 0.08, 0.02, sx * 0.075, -0.2, 0.0);
-    th.push(...[]);
+    const th = []; limb(th, pants, [0, 0, 0], [0, -0.43, -0.01], 0.112 * (fem ? 0.95 : 1), 0.078); el(th, pants, sx * 0.03, -0.18, -0.005, 0.1, 0.17, 0.1); el(th, pants, 0, -0.33, 0.005, 0.088, 0.1, 0.088); bx3(th, 0x2b2620, 0.06, 0.08, 0.02, sx * 0.075, -0.2, 0.0);
+    // карман на бедре, у правой ноги — кобура
+    bx3(th, new THREE.Color(pants).multiplyScalar(0.8).getHex(), 0.03, 0.12, 0.1, sx * 0.085, -0.2, 0.0);
+    if (sx > 0) { bx3(th, 0x1c1c1c, 0.05, 0.16, 0.08, 0.11, -0.16, 0.0, 0, 0, -0.08); bx3(th, 0x1c1c1c, 0.02, 0.02, 0.12, 0.08, -0.06, 0.0); }
     hip.add(cm(th));
     const knee = new THREE.Group(); knee.position.set(0, -0.43, -0.01); hip.add(knee);
-    const sh = []; limb(sh, pants, [0, 0, 0], [0, -0.36, 0.0], 0.07, 0.056); el(sh, new THREE.Color(pants).multiplyScalar(0.7).getHex(), 0, -0.02, -0.045, 0.058, 0.065, 0.04);
+    const sh = []; limb(sh, pants, [0, 0, 0], [0, -0.36, 0.0], 0.08, 0.064); el(sh, pants, 0, -0.12, 0.012, 0.074, 0.12, 0.074); el(sh, pants, 0, -0.3, 0.0, 0.07, 0.06, 0.07);
+    el(sh, 0x262626, 0, -0.01, -0.058, 0.06, 0.07, 0.03); bx3(sh, 0x151515, 0.11, 0.016, 0.09, 0, -0.06, -0.01);
     limb(sh, s.boots, [0, -0.33, 0.0], [0, -0.44, -0.0], 0.06, 0.062); el(sh, s.boots, 0, -0.45, -0.06, 0.066, 0.05, 0.12); bx3(sh, 0x141414, 0.13, 0.03, 0.27, 0, -0.485, -0.05);
     knee.add(cm(sh));
     legs.push(hip); shins.push(knee);
@@ -776,13 +900,20 @@ export function makeCharacter(skinId, team, wid, fid) {
   el(tp, pants, 0, 0.95, 0, 0.17 * sw * (fem ? 1.08 : 1), 0.11, 0.12);
   el(tp, 0x2b2620, 0, 1.03, 0, 0.18 * sw, 0.035, 0.13);
   el(tp, s.shirt, 0, 1.16, 0, 0.17 * sw * (fem ? 0.84 : 1), 0.16, 0.125);
-  el(tp, s.shirt, 0, 1.34, 0, 0.225 * sw, 0.15, 0.135);
-  el(tp, s.vest, 0, 1.26, 0, 0.225 * sw, 0.2, 0.152);
+  el(tp, s.shirt, 0, 1.34, 0, 0.235 * sw, 0.16, 0.14); el(tp, s.shirt, 0, 1.24, 0.0, 0.2 * sw, 0.14, 0.13);
+  el(tp, s.vest, 0, 1.26, 0, 0.232 * sw, 0.2, 0.162); bx3(tp, s.vest, 0.3 * sw, 0.3, 0.05, 0, 1.27, -0.14); bx3(tp, s.vest, 0.3 * sw, 0.3, 0.05, 0, 1.27, 0.14);
   for (const sx of [-1, 1]) bx3(tp, new THREE.Color(s.vest).multiplyScalar(0.7).getHex(), 0.05, 0.36, 0.31, sx * 0.1 * sw, 1.3, 0);
   for (const x of [-0.07, 0, 0.07]) bx3(tp, s.vest, 0.06, 0.08, 0.04, x * sw, 1.16, -0.145);
   for (const x of [-0.07, 0, 0.07]) bx3(tp, 0x2b2620, 0.062, 0.012, 0.042, x * sw, 1.2, -0.146);
   bx3(tp, tcol, 0.16, 0.05, 0.01, 0, 1.36, 0.15);
-  for (const sx of [-1, 1]) el(tp, s.vest, sx * 0.19 * sw, 1.42, 0, 0.075, 0.05, 0.08);
+  // рюкзак-гидратор, рация с антенной, ремень с подсумками, пластины бронежилета
+  const vd = new THREE.Color(s.vest).multiplyScalar(0.8).getHex();
+  bx3(tp, vd, 0.24 * sw, 0.3, 0.07, 0, 1.27, 0.185); bx3(tp, 0x1a1a1a, 0.2 * sw, 0.025, 0.075, 0, 1.36, 0.19);
+  bx3(tp, 0x191919, 0.05, 0.11, 0.04, -0.1 * sw, 1.33, 0.235); limb(tp, 0x111111, [-0.1 * sw, 1.38, 0.235], [-0.115 * sw, 1.72, 0.25], 0.006, 0.004);
+  for (const x of [-0.13, 0.13]) bx3(tp, vd, 0.06, 0.07, 0.05, x * sw, 1.02, -0.11);
+  bx3(tp, 0x191919, 0.05, 0.05, 0.04, 0.16 * sw, 1.02, 0.02);
+  bx3(tp, vd, 0.2 * sw, 0.03, 0.02, 0, 1.43, -0.148);
+  for (const sx of [-1, 1]) { el(tp, s.vest, sx * 0.19 * sw, 1.42, 0, 0.075, 0.05, 0.082); el(tp, s.shirt, sx * 0.205 * sw, 1.37, 0, 0.066, 0.07, 0.072); }
   limb(tp, s.skin, [0, 1.43, 0], [0, 1.53, -0.005], 0.052, 0.048);
   body.add(cm(tp));
   // верх (наклон по взгляду): голова, руки, оружие
@@ -792,10 +923,19 @@ export function makeCharacter(skinId, team, wid, fid) {
   el(hp, s.skin, 0, 0.03, 0, 0.098, 0.118, 0.108);
   el(hp, s.skin, 0, -0.04, -0.03, 0.074, 0.055, 0.075);
   el(hp, s.skin, 0, 0.02, -0.106, 0.018, 0.03, 0.02);
-  for (const sx of [-1, 1]) { el(hp, s.skin, sx * 0.098, 0.02, 0.0, 0.015, 0.03, 0.022); el(hp, 0xffffff, sx * 0.036, 0.05, -0.092, 0.016, 0.01, 0.008); el(hp, 0x1a1a1a, sx * 0.036, 0.05, -0.098, 0.008, 0.008, 0.005); bx3(hp, s.hair, 0.035, 0.008, 0.01, sx * 0.037, 0.071, -0.099, 0, 0, sx * 0.12); }
-  el(hp, 0x8a4a40, 0, -0.035, -0.098, 0.025, 0.006, 0.008);
+  for (const sx of [-1, 1]) { el(hp, s.skin, sx * 0.098, 0.02, 0.0, 0.015, 0.03, 0.022); el(hp, 0xd8d2c8, sx * 0.034, 0.048, -0.093, 0.011, 0.0065, 0.006); el(hp, 0x2a1d14, sx * 0.034, 0.048, -0.0975, 0.0055, 0.0055, 0.004); bx3(hp, s.hair, 0.03, 0.005, 0.008, sx * 0.035, 0.064, -0.1, 0, 0, sx * 0.1); el(hp, new THREE.Color(s.skin).multiplyScalar(0.8).getHex(), sx * 0.034, 0.056, -0.094, 0.016, 0.006, 0.006); }
+  el(hp, 0x9a5a50, 0, -0.035, -0.099, 0.019, 0.004, 0.006);
+  // нос, скулы, щетина у мужчин
+  el(hp, s.skin, 0, -0.005, -0.112, 0.014, 0.022, 0.014);
+  for (const sx of [-1, 1]) el(hp, s.skin, sx * 0.05, 0.0, -0.085, 0.03, 0.02, 0.02);
+  if (!fem && s.hat !== 'mask') el(hp, new THREE.Color(s.skin).multiplyScalar(0.72).getHex(), 0, -0.055, -0.04, 0.078, 0.045, 0.074);
   switch (s.hat) {
-    case 'helmet': el(hp, s.hatColor, 0, 0.085, 0.005, 0.124, 0.098, 0.132); el(hp, s.hatColor, 0, 0.045, 0.005, 0.13, 0.02, 0.138); bx3(hp, 0x222222, 0.05, 0.03, 0.03, 0, 0.14, -0.12); break;
+    case 'helmet':
+      el(hp, s.hatColor, 0, 0.085, 0.005, 0.124, 0.098, 0.132); el(hp, s.hatColor, 0, 0.045, 0.005, 0.13, 0.02, 0.138);
+      bx3(hp, 0x222222, 0.05, 0.03, 0.03, 0, 0.14, -0.12); bx3(hp, 0x1a1a1a, 0.03, 0.05, 0.02, 0, 0.11, -0.135);
+      for (const sx of [-1, 1]) { bx3(hp, 0x2a2a2a, 0.012, 0.03, 0.1, sx * 0.128, 0.06, 0.0); limb(hp, 0x1a1a1a, [sx * 0.105, 0.03, -0.01], [sx * 0.07, -0.1, -0.03], 0.006, 0.006); }
+      for (const sx of [-1, 1]) el(hp, 0x101418, sx * 0.04, 0.115, -0.105, 0.035, 0.022, 0.018);
+      bx3(hp, 0x222222, 0.1, 0.012, 0.02, 0, 0.115, -0.108); break;
     case 'cap': el(hp, s.hatColor, 0, 0.1, 0.005, 0.108, 0.065, 0.114); bx3(hp, s.hatColor, 0.17, 0.012, 0.1, 0, 0.088, -0.13, 0.08); break;
     case 'beanie': el(hp, s.hatColor, 0, 0.1, 0.01, 0.11, 0.085, 0.116); el(hp, s.hatColor, 0, 0.065, 0.005, 0.112, 0.025, 0.118); break;
     case 'mask': el(hp, s.hatColor, 0, 0.03, 0.002, 0.104, 0.124, 0.113); el(hp, s.hatColor, 0, -0.04, -0.03, 0.08, 0.06, 0.08); bx3(hp, 0xe74c3c, 0.13, 0.016, 0.012, 0, 0.05, -0.105); break;
@@ -816,8 +956,10 @@ export function makeCharacter(skinId, team, wid, fid) {
   else { const f = gu.fore && gu.fore.isVector3 ? gu.fore : new THREE.Vector3(0, -0.02, -0.3); hL = [gp.x + f.x, gp.y + f.y - 0.02, gp.z + f.z]; }
   for (const [sh, hd, side] of [[shR, hR, 1], [shL, hL, -1]]) {
     const elb = [(sh[0] + hd[0]) / 2 + side * 0.09, (sh[1] + hd[1]) / 2 - 0.16, (sh[2] + hd[2]) / 2 + 0.06];
-    limb(ap, s.shirt, sh, elb, 0.066, 0.054); limb(ap, s.shirt, elb, hd, 0.052, 0.04);
+    limb(ap, s.shirt, sh, elb, 0.074, 0.06); limb(ap, s.shirt, elb, hd, 0.058, 0.044);
     el(ap, tcol, sh[0] + side * 0.01, sh[1] - 0.06, sh[2], 0.06, 0.035, 0.062);
+    el(ap, 0x262626, elb[0], elb[1], elb[2] + 0.012, 0.05, 0.05, 0.045);
+    limb(ap, s.shirt, [hd[0] * 0.8 + elb[0] * 0.2, hd[1] * 0.8 + elb[1] * 0.2, hd[2] * 0.8 + elb[2] * 0.2], hd, 0.044, 0.04);
     ball(ap, hd, 0.042, 0x2a2826);
   }
   arms.add(cm(ap));

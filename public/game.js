@@ -73,6 +73,7 @@ const glc = $('gl'), hud = $('hud'), h = hud.getContext('2d');
 const renderer = new THREE.WebGLRenderer({ canvas: glc, antialias: true, powerPreference: 'high-performance' });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
 renderer.autoClear = false;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(save.fov, 1, 0.05, 500); camera.rotation.order = 'YXZ';
@@ -107,7 +108,7 @@ addEventListener('resize', resize);
 let cardR = null;
 const imgCache = {};
 function snap(obj, w, hgt, camPos, look, fov) {
-  if (!cardR) { cardR = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true }); cardR.outputColorSpace = THREE.SRGBColorSpace; }
+  if (!cardR) { cardR = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true }); cardR.outputColorSpace = THREE.SRGBColorSpace; cardR.toneMapping = THREE.ACESFilmicToneMapping; cardR.toneMappingExposure = 1.1; }
   cardR.setSize(w, hgt, false);
   const sc = new THREE.Scene(); sc.environment = envFor(cardR); sc.add(new THREE.HemisphereLight(0xffffff, 0x9fb0c8, 2.6)); const l = new THREE.DirectionalLight(0xffffff, 3.2); l.position.set(2, 4, 3); sc.add(l); const l2 = new THREE.DirectionalLight(0x9fc4ff, 2.0); l2.position.set(-3, 1, -2); sc.add(l2); const l3 = new THREE.DirectionalLight(0xffffff, 1.2); l3.position.set(0, -2, 3); sc.add(l3); sc.add(obj);
   const cam = new THREE.PerspectiveCamera(fov, w / hgt, 0.01, 50); cam.position.copy(camPos); cam.lookAt(look);
@@ -124,7 +125,7 @@ function gloveImage(fid) {
   const k = 'gl' + fid; if (imgCache[k]) return imgCache[k];
   const g = makeGloveModel(fid);
   const box = new THREE.Box3().setFromObject(g), c = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
-  return (imgCache[k] = snap(g, 360, 180, new THREE.Vector3(c.x + size.x * 0.2, c.y + 0.05, c.z + Math.max(size.x, size.y) * 1.6 + 0.1), c, 35));
+  return (imgCache[k] = snap(g, 360, 180, new THREE.Vector3(c.x, c.y + size.y * 0.25, c.z + Math.max(size.x * 0.85, size.y * 1.7) + 0.02), c, 35));
 }
 function skinImage(id) {
   const k = 's' + id; if (imgCache[k]) return imgCache[k];
@@ -135,7 +136,7 @@ function skinImage(id) {
 // Предпросмотр персонажа в меню
 const pv = $('preview');
 const pvR = new THREE.WebGLRenderer({ canvas: pv, alpha: true, antialias: true });
-pvR.outputColorSpace = THREE.SRGBColorSpace;
+pvR.outputColorSpace = THREE.SRGBColorSpace; pvR.toneMapping = THREE.ACESFilmicToneMapping;
 const pvScene = new THREE.Scene();
 pvScene.environment = envFor(pvR);
 pvScene.add(new THREE.HemisphereLight(0xcfe0ff, 0x2a3550, 2.0));
@@ -244,7 +245,7 @@ function buildArsenal() {
     const owned = save.ownedW.includes(w.key), eq = (w.slot === 0 ? save.primary : save.pistol) === w.key;
     const el = document.createElement('div'); el.className = 'card' + (eq ? ' eq' : '');
     const dps = (w.dmg * w.pellets) / 150, rate = Math.min(1, 1000 / w.fire / 14), acc = 1 - w.spread / 0.1, mob = (w.speed - 0.76) / 0.3;
-    const tag = w.key === 'awp' ? '<span class="tag gold">ИМБА</span>' : w.scope === 1 ? '<span class="tag">коллиматор</span>' : owned ? '<span class="tag">куплено</span>' : '';
+    const tag = (w.key === 'awp' ? '<span class="tag gold">ИМБА</span>' : w.scope === 1 ? '<span class="tag">коллиматор</span>' : owned ? '<span class="tag">куплено</span>' : '') + (w.hs1 ? ' <span class="tag pink">ваншот в голову</span>' : '');
     el.innerHTML = `<img src="${gunImage(w.id, eqFid(w.id))}" alt=""><div class="nm">${w.name} ${tag}</div>
       <div class="stats"><span>Урон</span>${bar(dps)}<span>Скорострельн.</span>${bar(rate)}<span>Точность</span>${bar(acc)}<span>Мобильность</span>${bar(mob)}</div>
       ${owned ? (eq ? '<button class="btn" disabled>Выбрано</button>' : '<button class="btn blue">Выбрать</button>') : `<button class="btn acc" ${save.money < w.price ? 'disabled' : ''}>Купить · $${w.price.toLocaleString('ru-RU')}</button>`}`;
@@ -367,11 +368,11 @@ $('mkRefresh').onclick = () => { Sfx.uiClick(); send({ t: 'market' }); };
 // ----- админ -----
 $('admGo').onclick = () => { save.adminPass = $('admPass').value; persist(); $('admErr').textContent = ''; send({ t: 'admin', pass: save.adminPass }); };
 $('admSayGo').onclick = () => { const t = $('admSay').value.trim(); if (t) { send({ t: 'adm', cmd: 'say', text: t }); $('admSay').value = ''; } };
-$('admMoney').onclick = () => { if (!isAdmin) return; addMoney(10000); toast('+$10 000'); };
-$('admUnlock').onclick = () => { if (!isAdmin) return; save.ownedW = WEAPONS.map((w) => w.key); save.ownedS = SKINS.map((s) => s.key); persist(); fillSelects(); toast('Всё оружие и персонажи открыты'); };
-$('admKnives').onclick = () => { if (!isAdmin) return; let n = 0; for (const f of FINISHES) if (f.w === 'knife' && !(save.inv[f.id] > 0)) { save.inv[f.id] = 1; n++; } persist(); buildInventory(); refreshPreview(); toast(n ? `Выдано ножей: ${n}` : 'Все ножи уже есть'); };
-$('admSkins').onclick = () => { if (!isAdmin) return; let n = 0; for (const f of FINISHES) if (!(save.inv[f.id] > 0)) { save.inv[f.id] = 1; n++; } persist(); buildInventory(); refreshPreview(); toast(n ? `Выдано скинов: ${n}` : 'Все скины уже есть'); };
-$('admGloves').onclick = () => { if (!isAdmin) return; let n = 0; for (const f of FINISHES) if (f.w === 'gloves' && !(save.inv[f.id] > 0)) { save.inv[f.id] = 1; n++; } persist(); buildInventory(); toast(n ? `Выдано перчаток: ${n}` : 'Все перчатки уже есть'); };
+$('admMoney').onclick = () => { if (!isAdmin) return toast('Сначала войди в админ-панель'); addMoney(10000); toast('+$10 000'); };
+$('admUnlock').onclick = () => { if (!isAdmin) return toast('Сначала войди в админ-панель'); save.ownedW = WEAPONS.map((w) => w.key); save.ownedS = SKINS.map((s) => s.key); persist(); fillSelects(); toast('Всё оружие и персонажи открыты'); };
+$('admKnives').onclick = () => { if (!isAdmin) return toast('Сначала войди в админ-панель'); let n = 0; for (const f of FINISHES) if (f.w === 'knife' && !(save.inv[f.id] > 0)) { save.inv[f.id] = 1; n++; } persist(); buildInventory(); refreshPreview(); toast(n ? `Выдано ножей: ${n}` : 'Все ножи уже есть'); };
+$('admSkins').onclick = () => { if (!isAdmin) return toast('Сначала войди в админ-панель'); let n = 0; for (const f of FINISHES) if (!(save.inv[f.id] > 0)) { save.inv[f.id] = 1; n++; } persist(); buildInventory(); refreshPreview(); toast(n ? `Выдано скинов: ${n}` : 'Все скины уже есть'); };
+$('admGloves').onclick = () => { if (!isAdmin) return toast('Сначала войди в админ-панель'); let n = 0; for (const f of FINISHES) if (f.w === 'gloves' && !(save.inv[f.id] > 0)) { save.inv[f.id] = 1; n++; } persist(); buildInventory(); toast(n ? `Выдано перчаток: ${n}` : 'Все перчатки уже есть'); };
 $('admFree').onclick = () => { if (!isAdmin) return; save.freeCases = !save.freeCases; persist(); renderAdmin(); };
 function renderAdmin() {
   $('admLogin').classList.toggle('hidden', isAdmin); $('admBody').classList.toggle('hidden', !isAdmin);
@@ -475,12 +476,10 @@ function muzzleFlash(pos, big, own, dir) {
   const L = own ? flashLight : flashLight2; L.position.copy(pos); L.intensity = 9 * big; L.userData.t = performance.now();
   for (let i = 0; i < 3; i++) pNorm.add({ x: pos.x, y: pos.y, z: pos.z, vx: (dir ? dir.x * 0.6 : 0) + (Math.random() - 0.5) * 0.4, vy: 0.25 + Math.random() * 0.3, vz: (dir ? dir.z * 0.6 : 0) + (Math.random() - 0.5) * 0.4, max: 0.9 + Math.random() * 0.5, s: 0.1, grow: 0.7, c: COL.smoke, a: 0.16, drag: 0.94 });
 }
-// нормаль поверхности в точке попадания: у ствола дерева — от оси ствола
+// нормаль поверхности в точке попадания: у непрямоугольных объектов — по их точной форме
 function surfNormal(end, q) {
-  const map = MAPS[worldIdx], sx = end.x / U, sy = end.z / U, tx = Math.floor(sx / C.TILE), ty = Math.floor(sy / C.TILE);
-  const c = map.cols[ty * map.W + tx];
-  if (c && c.s.some((r) => r[2] === 'trunk')) { const hx = sx - (tx + 0.5) * C.TILE, hy = sy - (ty + 0.5) * C.TILE, l = Math.hypot(hx, hy) || 1; return new THREE.Vector3(hx / l, 0, hy / l); }
-  return new THREE.Vector3(q[0], q[2], q[1]);
+  const n = S.hitNormal(MAPS[worldIdx], end.x / U, end.z / U, end.y / U);
+  return n ? new THREE.Vector3(n[0], n[2], n[1]) : new THREE.Vector3(q[0], q[2], q[1]);
 }
 function impactWall(p, n) {
   placeDecal(holes, holeIdx++, p, n, 0.07 + Math.random() * 0.04);
@@ -490,10 +489,26 @@ function impactWall(p, n) {
   for (let i = 0; i < 3; i++) { const c = chips[chipIdx++ % chips.length]; c.m.position.copy(p).addScaledVector(n, 0.02); c.m.visible = true; c.life = 0; c.v.set(n.x * 2 + (Math.random() - 0.5) * 2, n.y * 2 + Math.random() * 2.5, n.z * 2 + (Math.random() - 0.5) * 2); }
 }
 function impactBody(p, dir, big) {
-  for (let i = 0; i < (big ? 18 : 9); i++) pNorm.add({ x: p.x, y: p.y, z: p.z, vx: dir.x * 2 + (Math.random() - 0.5) * 2, vy: Math.random() * 1.5, vz: dir.z * 2 + (Math.random() - 0.5) * 2, max: 0.5 + Math.random() * 0.3, s: 0.05 + Math.random() * 0.04, c: COL.blood, g: 9, a: 0.95, drag: 0.97 });
-  const L = Math.hypot(dir.x, dir.z) || 1;
-  const hit = S.ray3(MAPS[worldIdx], p.x / U, p.z / U, p.y / U, dir.x / L, dir.z / L, -0.5, 120);
-  if (hit.n && hit.t < 120) { const k = hit.t * U; placeDecal(bloods, bloodIdx++, new THREE.Vector3(p.x + (dir.x / L) * k, p.y - 0.5 * k, p.z + (dir.z / L) * k), new THREE.Vector3(hit.n[0], hit.n[2], hit.n[1]), 0.4 + Math.random() * 0.5); }
+  for (let i = 0; i < (big ? 22 : 12); i++) pNorm.add({ x: p.x, y: p.y, z: p.z, vx: dir.x * 2.2 + (Math.random() - 0.5) * 2, vy: Math.random() * 1.6, vz: dir.z * 2.2 + (Math.random() - 0.5) * 2, max: 0.5 + Math.random() * 0.35, s: 0.04 + Math.random() * 0.05, c: COL.blood, g: 9, a: 0.95, drag: 0.97 });
+  pNorm.add({ x: p.x, y: p.y, z: p.z, vx: dir.x * 0.6, vy: 0.2, vz: dir.z * 0.6, max: 0.35, s: 0.18, grow: 0.8, c: COL.blood, a: 0.5, drag: 0.9 });
+  const map = MAPS[worldIdx], L = Math.hypot(dir.x, dir.z) || 1;
+  // брызги на стену позади цели
+  const d3 = new THREE.Vector3(dir.x / L, -0.45, dir.z / L).normalize();
+  const hit = S.ray3(map, p.x / U, p.z / U, p.y / U, d3.x, d3.z, d3.y, 110);
+  if (hit.n && hit.t < 110) {
+    const k = hit.t * U, hp = new THREE.Vector3(p.x + d3.x * k, p.y + d3.y * k, p.z + d3.z * k);
+    const nn = S.hitNormal(map, hp.x / U, hp.z / U, hp.y / U) || hit.n;
+    placeDecal(bloods, bloodIdx++, hp, new THREE.Vector3(nn[0], nn[2], nn[1]), 0.35 + Math.random() * 0.45);
+  }
+  // капли на земле рядом
+  const g = S.ray3(map, p.x / U + dir.x / L * 8, p.z / U + dir.z / L * 8, p.y / U, 0, 0, -1, 200);
+  if (g.n && g.n[2] > 0.7) placeDecal(bloods, bloodIdx++, new THREE.Vector3(p.x + dir.x / L * 8 * U, p.y - g.t * U, p.z + dir.z / L * 8 * U), new THREE.Vector3(0, 1, 0), 0.25 + Math.random() * 0.3);
+}
+// лужа крови под убитым (исчезает вместе с остальными следами)
+function bloodPool(px, py, pz) {
+  const g = S.ray3(MAPS[worldIdx], px, py, pz + 20, 0, 0, -1, 200);
+  if (!g.n || g.n[2] < 0.7) return;
+  for (let i = 0; i < 2; i++) placeDecal(bloods, bloodIdx++, new THREE.Vector3((px + (Math.random() - 0.5) * 10) * U, (pz + 20 - g.t) * U, (py + (Math.random() - 0.5) * 10) * U), new THREE.Vector3(0, 1, 0), 0.9 + Math.random() * 0.5);
 }
 
 // =====================================================================
@@ -571,7 +586,7 @@ function onSnap(m) {
       feed.push({ kill: ev, t: now });
       if (ev.k === myId && ev.v !== myId) { const r = WEAPONS[ev.w].reward; addMoney(r); floaters.push({ s: `+$${r}  ${ev.vn}${ev.hs ? '  · ХЕДШОТ' : ''}`, t: now }); Sfx.killDing(); }
       if (ev.v === myId) { killedBy = { name: ev.kn, w: WEAPONS[ev.w].name, hs: ev.hs, self: ev.k === myId }; deathKiller = ev.k !== myId ? { x: ev.kx, y: ev.ky } : null; }
-      const vp = players.get(ev.v); if (vp) deathInfo.set(ev.v, { a: Math.atan2(vp.y - ev.ky, vp.x - ev.kx), hs: ev.hs, t: now });
+      const vp = players.get(ev.v); if (vp) { deathInfo.set(ev.v, { a: Math.atan2(vp.y - ev.ky, vp.x - ev.kx), hs: ev.hs, t: now }); const a = Math.atan2(vp.y - ev.ky, vp.x - ev.kx); setTimeout(() => bloodPool(vp.x + Math.cos(a) * 30, vp.y + Math.sin(a) * 30, vp.z), 700); }
     } else if (ev.t === 'msg') feed.push({ s: ev.s, c: '#cfd5dd', t: now });
   }
   if (feed.length > 6) feed.splice(0, feed.length - 6);
@@ -676,7 +691,7 @@ $('chatIn').addEventListener('keydown', (e) => {
 function selectSlot(s) {
   if (s === me.slot) return;
   const w = me.wpn[s]; if (w == null || w < 0) return;
-  me.prevSlot = me.slot; me.slot = s; me.scoped = false; pendShots = []; localSwitchUntil = performance.now() + 350; Sfx.deploy(); buildVM(); playAnim('draw', WEAPONS[w].cat === 'knife' ? 650 : 450); if (WEAPONS[w].cat === 'knife') Sfx.flick();
+  me.prevSlot = me.slot; me.slot = s; me.scoped = false; pendShots = []; localSwitchUntil = performance.now() + 350; Sfx.deploy(); buildVM(); playAnim('draw', WEAPONS[w].cat === 'knife' ? knifeT(0) : 450); if (WEAPONS[w].cat === 'knife') Sfx.flick();
 }
 addEventListener('keydown', (e) => {
   if (!joined || chatOpen) return;
@@ -785,7 +800,9 @@ const vmPivot = new THREE.Group(); vm.add(vmPivot);
 const vmFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex('flash'), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true })); vmFlash.visible = false;
 let vmKey = '', vmGun = null, anim = null;
 function playAnim(type, dur) { anim = { type, t0: performance.now(), dur }; }
-function startInspect() { if (!joined || !me.alive || me.scoped || (me.info && me.info.rl > 0)) return; const w = curW(); playAnim('inspect', w.cat === 'knife' ? 2100 : 2300); Sfx.inspect(); }
+const KNIFE_T = { butterfly: [950, 2700], flip: [700, 2200], karambit: [750, 2300], katana: [800, 2400], machete: [750, 2300] };
+function knifeT(i) { const k = vmGun && vmGun.userData.knife; return (KNIFE_T[k] || [700, 2200])[i]; }
+function startInspect() { if (!joined || !me.alive || me.scoped || (me.info && me.info.rl > 0)) return; const w = curW(); playAnim('inspect', w.cat === 'knife' ? knifeT(1) : 2300); Sfx.inspect(); }
 const vmFlare = makeFlare(); vmFlare.visible = false;
 function buildVM(force) {
   const wid = curWid(), fid = eqFid(wid), gl = eqGlove(), key = wid + '_' + fid + '_' + save.skin + '_' + gl;
@@ -799,6 +816,74 @@ function buildVM(force) {
     vmFlare.position.copy(vmGun.userData.muzzle); vmFlare.rotation.set(0, Math.PI, 0); vmGun.add(vmFlare);
   }
   vmPivot.traverse((o) => { o.frustumCulled = false; });
+  vmGun.userData.homeP = vmGun.position.clone(); vmGun.userData.homeQ = vmGun.quaternion.clone();
+}
+// ---- Анимации ножей: вращение модели вокруг точки (кольцо карамбита, рукоять, ось клинка) ----
+const _ax = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) }, _kq = new THREE.Quaternion(), _kv = new THREE.Vector3();
+function spinKnife(g, px, py, pz, axis, ang) {
+  const u = g.userData; _kq.setFromAxisAngle(_ax[axis], ang);
+  g.quaternion.copy(u.homeQ).multiply(_kq);
+  _kv.set(px, py, pz).applyQuaternion(_kq).negate().add(new THREE.Vector3(px, py, pz)).multiply(g.scale).applyQuaternion(u.homeQ);
+  g.position.copy(u.homeP).add(_kv);
+}
+const clamp01 = (t) => Math.max(0, Math.min(1, t)), seg = (p, a, b) => clamp01((p - a) / (b - a));
+const easeOut = (t) => 1 - Math.pow(1 - t, 3), easeIn = (t) => t * t * t;
+// пружинящий доводчик: чуть перелетает и возвращается
+const springT = (t) => t <= 0 ? 0 : t >= 1 ? 1 : 1 - Math.pow(1 - t, 3) + Math.sin(t * Math.PI) * 0.12;
+function knifeAnim(type, p, u, g, o) {
+  const k = u.knife, bp = u.bladePivot, h2 = u.handle2;
+  if (type === 'draw') {
+    const rise = easeOut(seg(p, 0, 0.45));
+    o.y -= (1 - rise) * 0.16; o.rx -= (1 - rise) * 0.7;
+    if (k === 'butterfly') {
+      // закрытый нож → откидываем «кусачую» ручку → переворачиваем клинок вместе с ней
+      const a = ease(seg(p, 0.12, 0.45)), b = springT(seg(p, 0.45, 0.85));
+      if (bp) bp.rotation.x = Math.PI + Math.PI * b;
+      if (h2) h2.rotation.x = Math.PI * a + Math.PI * b;
+      o.rz += Math.sin(seg(p, 0.1, 0.9) * Math.PI * 2) * 0.35; o.ry += bump(seg(p, 0.4, 0.95)) * 0.25;
+    } else if (k === 'flip') {
+      if (bp) bp.rotation.x = -Math.PI * (1 - springT(seg(p, 0.2, 0.6)));
+      o.rx += bump(seg(p, 0.15, 0.55)) * 0.35;
+    } else if (k === 'karambit') {
+      spinKnife(g, 0, -0.004, 0.11, 'x', -Math.PI * 2 * easeOut(seg(p, 0.05, 0.85)));
+    } else if (k === 'katana' || k === 'machete') {
+      const e = easeOut(seg(p, 0, 0.9)); o.ry -= (1 - e) * 1.1; o.rz += (1 - e) * 0.6; o.x += (1 - e) * 0.06;
+    } else {
+      // подброс ножа: один оборот вокруг рукояти и ловля
+      const t = seg(p, 0.05, 0.8); spinKnife(g, 0, 0, 0.045, 'x', -Math.PI * 2 * ease(t)); o.y += bump(t) * 0.05;
+    }
+    return;
+  }
+  // inspect
+  if (k === 'butterfly') {
+    // закрыть (клинок с ручкой назад, затем ручку), повертеть закрытый нож, снова открыть
+    const c1 = ease(seg(p, 0.08, 0.3)), c2 = ease(seg(p, 0.3, 0.45)), o1 = ease(seg(p, 0.6, 0.72)), o2 = springT(seg(p, 0.72, 0.88));
+    let th = -Math.PI * c1 + Math.PI * o2, hb = -Math.PI * c1 - Math.PI * c2 + Math.PI * o1 + Math.PI * o2;
+    if (bp) bp.rotation.x = th; if (h2) h2.rotation.x = hb;
+    const show = bump(seg(p, 0.42, 0.66)); o.ry += show * 0.4; o.rz -= show * 0.3; o.rx += show * 0.15;
+    o.rz += Math.sin(seg(p, 0.05, 0.5) * Math.PI * 2) * 0.25 + Math.sin(seg(p, 0.58, 0.95) * Math.PI * 2) * 0.3;
+    o.ry += bump(seg(p, 0.85, 1)) * 0.3;
+  } else if (k === 'flip') {
+    const close = ease(seg(p, 0.08, 0.3)), open = springT(seg(p, 0.55, 0.68));
+    if (bp) bp.rotation.x = -Math.PI * 0.97 * (close - open);
+    const sh = bump(seg(p, 0.25, 0.55)); o.ry += sh * 0.8; o.rz += sh * 0.4;
+    const ad = bump(seg(p, 0.66, 1)); o.ry += ad * 1.0; o.rz -= ad * 0.35; o.x -= ad * 0.04; o.y += ad * 0.02;
+  } else if (k === 'karambit') {
+    spinKnife(g, 0, -0.004, 0.11, 'x', -Math.PI * 4 * ease(seg(p, 0.08, 0.45)));
+    const ad = bump(seg(p, 0.45, 1)); o.ry += ad * 1.0; o.rz += ad * 0.5; o.x -= ad * 0.04; o.rx -= bump(seg(p, 0.05, 0.5)) * 0.25;
+  } else if (k === 'katana' || k === 'machete') {
+    const a = bump(seg(p, 0, 0.55)), b = bump(seg(p, 0.45, 1));
+    o.ry += a * 0.9; o.rz += a * 0.5; o.x -= a * 0.05; o.y += a * 0.03;
+    spinKnife(g, 0, 0, 0.045, 'z', Math.PI * ease(seg(p, 0.35, 0.6)) - Math.PI * ease(seg(p, 0.75, 0.95)));
+    o.rx -= b * 0.35; o.ry -= b * 0.25;
+  } else {
+    // поворот к себе, прокрутка вокруг оси клинка, переброс и возврат
+    const a = bump(seg(p, 0, 0.5)), b = bump(seg(p, 0.5, 1));
+    o.ry += a * 1.0; o.rz += a * 0.45; o.x -= a * 0.045; o.y += a * 0.02;
+    if (p <= 0.55) spinKnife(g, 0, 0, 0.045, 'z', Math.PI * 2 * ease(seg(p, 0.3, 0.55)));
+    else spinKnife(g, 0, 0, 0.045, 'x', -Math.PI * 2 * ease(seg(p, 0.6, 0.85)));
+    o.rx -= b * 0.3; o.ry -= b * 0.4; o.rz -= b * 0.3; o.y += bump(seg(p, 0.6, 0.85)) * 0.05;
+  }
 }
 const VM_BASE = { pistol: [0.085, -0.07, -0.42, 0.04], dual: [0.0, -0.07, -0.42, 0], knife: [0.13, -0.12, -0.3, 0], smg: [0.125, -0.095, -0.27, 0.1], rifle: [0.13, -0.098, -0.25, 0.11], shotgun: [0.13, -0.095, -0.24, 0.11], sniper: [0.13, -0.095, -0.24, 0.1], mg: [0.135, -0.1, -0.25, 0.11] };
 const KNIFE_ROT = [1.2, 0.18, -0.12]; // нож стоит вертикально: клинок вверх, лёгкий наклон к центру
@@ -828,6 +913,7 @@ function updateVM(now, dt) {
   if (u.mag) u.mag.position.copy(u.magHome);
   if (u.slide) { u.slide.position.copy(u.slideHome); u.slide.rotation.set(0, 0, 0); }
   if (u.bladePivot) u.bladePivot.rotation.set(0, 0, 0);
+  if (u.homeP) { vmGun.position.copy(u.homeP); vmGun.quaternion.copy(u.homeQ); }
   if (u.handle2) u.handle2.rotation.set(0, 0, 0);
   // перезарядка: магазин выходит и возвращается, затвор передёргивается
   if (info.rl > 0 && !knife) {
@@ -842,23 +928,16 @@ function updateVM(now, dt) {
     const p = (now - anim.t0) / anim.dur;
     if (p >= 1) anim = null;
     else switch (anim.type) {
-      case 'draw': {
-        const e = ease(p);
-        y -= (1 - e) * 0.18; rx -= (1 - e) * 0.9;
-        if (u.knife === 'butterfly') { if (u.bladePivot) u.bladePivot.rotation.x = Math.PI * (1 - e) * 2; if (u.handle2) u.handle2.rotation.x = -Math.PI * Math.max(0, 1 - e * 1.6); rz += Math.sin(e * Math.PI * 2) * 0.4; }
-        else if (u.knife === 'flip') { if (u.bladePivot) u.bladePivot.rotation.x = -2.8 * Math.max(0, 1 - e * 1.4); }
-        else if (u.knife === 'karambit') { rz += (1 - e) * Math.PI * 2; }
-        else if (knife) { ry -= (1 - e) * 0.8; }
-        else if (u.slide && w.cat !== 'sniper') { u.slide.position.z += bump(Math.max(0, (p - 0.5) * 2)) * 0.04; }
-        break;
-      }
-      case 'inspect': {
-        const e = bump(p), e2 = bump(Math.min(1, p * 1.6));
-        if (!knife) { ry += e * 0.95; rz += e * 0.45; x -= e * 0.05; y += e * 0.02; rx += Math.sin(p * Math.PI * 2) * 0.12 * e; }
-        else if (u.knife === 'butterfly') { if (u.bladePivot) u.bladePivot.rotation.x = Math.sin(p * Math.PI * 6) * Math.PI * e; if (u.handle2) u.handle2.rotation.x = -Math.abs(Math.sin(p * Math.PI * 3)) * Math.PI * e; ry += e * 0.6; }
-        else if (u.knife === 'karambit') { rz += p * Math.PI * 4 * e2; ry += e * 0.5; }
-        else if (u.knife === 'flip') { if (u.bladePivot) u.bladePivot.rotation.x = -Math.max(0, Math.sin(p * Math.PI * 2)) * 2.6; ry += e * 0.7; }
-        else { ry += e * 1.1; rz += Math.sin(p * Math.PI * 2) * 0.8 * e; x -= e * 0.04; }
+      case 'draw': case 'inspect': {
+        if (knife) { const o = { x, y, z, rx, ry, rz }; knifeAnim(anim.type, p, u, vmGun, o); ({ x, y, z, rx, ry, rz } = o); break; }
+        if (anim.type === 'draw') {
+          const e = ease(p);
+          y -= (1 - e) * 0.18; rx -= (1 - e) * 0.9;
+          if (u.slide && w.cat !== 'sniper') u.slide.position.z += bump(Math.max(0, (p - 0.5) * 2)) * 0.04;
+        } else {
+          const e = bump(p);
+          ry += e * 0.95; rz += e * 0.45; x -= e * 0.05; y += e * 0.02; rx += Math.sin(p * Math.PI * 2) * 0.12 * e;
+        }
         break;
       }
       case 'slashA': case 'slashB': {
@@ -904,7 +983,7 @@ function interpPlayers(now) {
   return out;
 }
 
-let lastFrame = performance.now(), menuAng = Math.random() * 6, chimT = 0, eyeH = C.EYE;
+let lastFrame = performance.now(), menuAng = Math.random() * 6, chimT = 0, smokeT = 0, eyeH = C.EYE;
 function frame() {
   requestAnimationFrame(frame);
   const now = performance.now(), dt = Math.min(0.05, (now - lastFrame) / 1000); lastFrame = now;
@@ -1047,6 +1126,8 @@ function emitFires(dt) {
   }
 }
 function emitChimneys(dt) {
+  smokeT += dt;
+  if (smokeT > 0.35 && world.smokes) { smokeT = 0; for (const c of world.smokes) { const far = c.y > 6 ? 1 : 0.45; pNorm.add({ x: c.x + (Math.random() - 0.5) * 2 * far, y: c.y, z: c.z + (Math.random() - 0.5) * 2 * far, vx: 1.2 + Math.random() * 0.6, vy: (2.2 + Math.random()) * far, vz: (Math.random() - 0.5) * 0.6, max: 9, s: 3.5 * far, grow: 6 * far, c: COL.soot, a: 0.42, drag: 0.995 }); } }
   chimT += dt; if (chimT < 0.12) return; chimT = 0;
   for (const c of world.chimneys) pNorm.add({ x: c.x + (Math.random() - 0.5) * 0.2, y: c.y, z: c.z + (Math.random() - 0.5) * 0.2, vx: 0.3 + Math.random() * 0.2, vy: 0.9 + Math.random() * 0.4, vz: (Math.random() - 0.5) * 0.2, max: 4, s: 0.5, grow: 2.2, c: COL.chim, a: 0.35, drag: 0.99 });
 }

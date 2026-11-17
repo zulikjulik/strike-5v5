@@ -58,7 +58,7 @@
       // стоящий поезд-укрытие (2 ряда)
       train(x0, y, len) { for (let x = x0; x < x0 + len; x++) for (const yy of [y, y + 1]) set(x, yy, [[0, 100, 'train']], 'wall'); B.prop({ type: 'car', x: x0, y, w: len, h: 2 }); },
       // прилавок с коврами (Ичеришехер)
-      stall(x, y) { set(x, y, [[0, 30, 'stall']], 'crate'); B.prop({ type: 'stall', x, y }); },
+      stall(x, y) { set(x, y, [[0, 60, 'stall']], 'crate'); B.prop({ type: 'stall', x, y }); },
       wall(x0, y0, x1, y1, h = 72, mat = 'wall') { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(x, y, [[0, h, mat]], 'wall'); },
       crate(x, y, tall) { set(x, y, [[0, tall ? 52 : 26, 'crate']], 'crate'); },
       barrel(x, y) { set(x, y, [[0, 30, 'barrel']], 'barrel'); },
@@ -92,6 +92,30 @@
         for (let i = 0; i < 3; i++) { const c = at(x0 + 2 + i, ry); c.s = [[136, 140, 'slab'], [140, 144, 'roof']]; c.ramp = { dx: 1, dy: 0, z0: i * 24, z1: (i + 1) * 24 }; }
         for (const [x, y] of o.doors || []) { at(x, y).s = carve(at(x, y).s, 0, 53); at(x, y).kind = 'door'; trims.push([x, y, 53]); }
         for (const [x, y] of o.wins || []) { at(x, y).s = carve(at(x, y).s, 18, 58); trims.push([x, y, 18], [x, y, 58]); }
+      },
+      // сгоревшая машина: горизонтально 2×1 или вертикально 1×2
+      burntCar(x, y, horiz) {
+        const cells = horiz ? [[x, y], [x + 1, y]] : [[x, y], [x, y + 1]];
+        for (const [a, b] of cells) set(a, b, [[0, 40, 'bcar']], 'crate');
+        B.prop({ type: 'bcar', x, y, w: horiz ? 2 : 1, h: horiz ? 1 : 2, horiz: !!horiz });
+      },
+      // сгоревший автобус вдоль x
+      bus(x, y, len) { for (let i = 0; i < len; i++) set(x + i, y, [[0, 68, 'bus']], 'wall'); B.prop({ type: 'bus', x, y, w: len, h: 1 }); },
+      // противотанковый ёж
+      hedge(x, y) { set(x, y, [[0, 28, 'hedge']], 'crate'); },
+      // груда обломков (можно перепрыгнуть)
+      rubble(x, y) { set(x, y, [[0, 20, 'rubble']], 'crate'); },
+      // разрушенный двухэтажный дом: обвалившийся верх, пролом в стене, нет части крыши
+      ruin(x0, y0, o = {}) {
+        B.house2(x0, y0, o);
+        const x1 = x0 + 6, y1 = y0 + 4;
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const c = at(x, y); c.s = c.s.map((r) => r[2] === 'wall2' ? [r[0], r[1], 'ruin'] : r); }
+        // рваный край стен второго этажа
+        for (const [x, y, top] of o.jag || []) { const c = at(x, y); c.s = carve(c.s, top, 144); }
+        // крыша обрушена над частью дома
+        for (const [xa, ya, xb, yb] of o.open || []) for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) { const c = at(x, y); if (c.kind === 'in') c.s = c.s.filter((r) => r[0] < 136); }
+        // пролом в стене на первом этаже
+        for (const [x, y] of o.breach || []) { const c = at(x, y); c.s = carve(c.s, 0, 46); c.kind = 'door'; }
       },
       // грузовик-спавн: кабина (x..x+1, y), кузов (x..x+1, y+1..y+3)
       truck(x, y) {
@@ -177,6 +201,12 @@
         else { c.s = [[72, MT.H, 'mtower']]; c.kind = 'in'; }
       } else if (d < R + 1.25 && c.kind !== 'wall') { c.s = []; c.kind = 'out'; c.ramp = null; }
     }
+    // клетки, куда круглая стена заходит краем: только для пуль (ходить не мешают)
+    for (let y = 6; y <= 20; y++) for (let x = 15; x <= 28; x++) {
+      const c = B.at(x, y); if (c.kind === 'wall' || c.kind === 'in') continue;
+      const nx = Math.max(x, Math.min(cx, x + 1)), ny = Math.max(y, Math.min(cy, y + 1));
+      if (Math.hypot(nx - cx, ny - cy) < 4.25) c.shot = [[0, MT.H, 'mtower']];
+    }
     // входы с запада и востока
     for (const y of [12, 13]) for (const x of [18, 25]) { const c = B.at(x, y); c.s = [[64, MT.H, 'mtower']]; c.kind = 'door'; }
     // контрфорс с севера
@@ -184,7 +214,15 @@
     B.prop({ type: 'maiden', x: cx, y: cy, w: 0 });
   }
 
-  // ---------------- пять карт ----------------
+  // «28 Мая»: памятник в центре площади
+  const STATUE = { x: 22, y: 13 };
+  function warCenter(B) {
+    for (const y of [12, 13]) for (const x of [21, 22]) { const c = B.at(x, y); c.s = [[0, 172, 'statue']]; c.kind = 'wall'; c.ramp = null; c.spawn = null; }
+    for (let y = 10; y <= 15; y++) for (let x = 19; x <= 24; x++) { const c = B.at(x, y); if ((y === 10 || y === 15 || x === 19 || x === 24) && c.kind !== 'out' && !['sand', 'hedge', 'rubble'].includes(c.s[0] && c.s[0][2])) { c.s = []; c.kind = 'out'; c.ramp = null; } }
+    B.prop({ type: 'statue', x: 22, y: 13, w: 0 });
+  }
+
+  // ---------------- карты ----------------
   const DEFS = [
     { name: 'Деревня', theme: 'village', build(B) {
       B.truck(2, 10);
@@ -270,6 +308,27 @@
       B.tree(4, 6); B.tree(3, 19); B.tree(11, 12);
       B.crate(7, 12); B.crate(7, 13, true); B.barrel(19, 2); B.barrel(19, 23); B.sand(15, 9); B.sand(15, 16);
     } },
+    { name: '28 Мая', theme: 'warzone', center: 'war', borderH: 120, borderMat: 'barrier', build(B) {
+      B.truck(2, 11);
+      // разрушенные дома с севера и юга
+      B.ruin(5, 2, { doors: [[8, 6], [11, 4]], wins: [[5, 4]], jag: [[6, 2, 104], [7, 2, 96], [8, 2, 118], [5, 3, 110], [11, 2, 100]], open: [[6, 3, 8, 5]], breach: [[5, 5]] });
+      B.ruin(5, 19, { doors: [[8, 19], [11, 21]], wins: [[5, 21]], rampRow: 'bottom', jag: [[9, 23, 98], [10, 23, 110], [11, 23, 92], [11, 22, 104]], open: [[8, 20, 10, 22]], breach: [[7, 23]] });
+      // павильон метро «М»
+      B.house(13, 2, 17, 5, { doors: [[15, 5], [13, 3], [17, 3]], wins: [] });
+      B.prop({ type: 'metroM', x: 13, y: 2, w: 5, h: 4 });
+      // баррикады у спавна и на подходах
+      B.sand(6, 9); B.sand(7, 9); B.sand(6, 16); B.sand(7, 16);
+      B.sand(12, 10); B.sand(12, 15);
+      // машины, автобус, ежи, обломки
+      B.burntCar(9, 12, false);
+      B.burntCar(14, 8, true);
+      B.burntCar(18, 4, false);
+      B.bus(12, 20, 4);
+      B.hedge(11, 7); B.hedge(16, 11); B.hedge(16, 14); B.hedge(19, 18); B.hedge(4, 7);
+      B.rubble(13, 13); B.rubble(18, 8); B.rubble(17, 17); B.rubble(3, 18);
+      B.crate(15, 16); B.crate(15, 17, true); B.crate(19, 2); B.barrel(20, 23); B.barrel(4, 4);
+      B.sand(19, 12); B.sand(19, 13); B.burntCar(20, 7, true); B.burntCar(20, 19, true);
+    } },
   ];
 
   function buildMap(def) {
@@ -278,6 +337,7 @@
     mirror(B);
     if (def.center === 'metro') metroCenter(B);
     else if (def.center === 'maiden') maidenTower(B);
+    else if (def.center === 'war') warCenter(B);
     else tower(B);
     border(B, def.borderH || 120, def.borderMat || 'border');
     if (def.center === 'metro') for (const y of [6, 7, 8, 9, 16, 17, 18, 19]) for (const x of [0, W - 1]) B.at(x, y).s = [[0, def.borderH, 'tunnel']];
@@ -419,44 +479,109 @@
   }
 
   // 3D-луч по карте: {t, n:[nx,ny,nz]} (n=null — улетело)
-  // Пересечение луча с «настоящей» формой тонкого объекта внутри клетки (в пределах [tIn, tOut])
-  const TRUNK = { village: [5, 76], city: [5, 76], autumn: [5, 76], desert: [4, 108], winter: [4.6, 48], baku: [4.3, 62] };
-  function boxHit(ox, oy, oz, dx, dy, dz, b, tIn, tOut) {
-    let t0 = tIn, t1 = tOut, n = null;
-    const o = [ox, oy, oz], d = [dx, dy, dz];
-    for (let a = 0; a < 3; a++) {
-      const lo = b[a * 2], hi = b[a * 2 + 1];
-      if (Math.abs(d[a]) < 1e-9) { if (o[a] < lo || o[a] > hi) return null; continue; }
-      let ta = (lo - o[a]) / d[a], tb = (hi - o[a]) / d[a], sgn = -1;
-      if (ta > tb) { const q = ta; ta = tb; tb = q; sgn = 1; }
-      if (ta > t0) { t0 = ta; n = [0, 0, 0]; n[a] = sgn; }
-      if (tb < t1) t1 = tb;
-      if (t0 > t1) return null;
-    }
-    return { t: t0, n: n || [0, 0, 1] };
+  // ---- Точные формы объектов для пуль (SDF: расстояние до поверхности, < 0 — внутри) ----
+  const TRUNK = { village: [5, 76], city: [5, 76], autumn: [5, 76], desert: [4, 108], winter: [4.6, 48], baku: [4.3, 62], warzone: [5, 76] };
+  function sdBox(x, y, z, cx, cy, cz, hx, hy, hz) {
+    const qx = Math.abs(x - cx) - hx, qy = Math.abs(y - cy) - hy, qz = Math.abs(z - cz) - hz;
+    return Math.hypot(Math.max(qx, 0), Math.max(qy, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qy, qz), 0);
   }
-  function thinHit(map, c, mat, tx, ty, top, ox, oy, oz, dx, dy, dz, tIn, tOut) {
-    const TL = C.TILE, cx = (tx + 0.5) * TL, cy = (ty + 0.5) * TL;
-    if (mat === 'trunk') {
-      const [R, H] = TRUNK[map.theme] || TRUNK.village;
-      const fx = ox - cx, fy = oy - cy, a = dx * dx + dy * dy;
-      if (a < 1e-9) return null;
-      const b = 2 * (fx * dx + fy * dy), cc = fx * fx + fy * fy - R * R, disc = b * b - 4 * a * cc;
-      if (disc < 0) return null;
-      let t = (-b - Math.sqrt(disc)) / (2 * a);
-      if (cc < 0) t = tIn;
-      if (t < tIn || t > tOut) return null;
-      const z = oz + dz * t; if (z < 0 || z > H) return null;
-      const hx = ox + dx * t - cx, hy = oy + dy * t - cy, l = Math.hypot(hx, hy) || 1;
-      return { t, n: [hx / l, hy / l, 0] };
+  function sdCyl(x, y, z, cx, cy, r, z0, z1) {
+    const a = Math.hypot(x - cx, y - cy) - r, b = Math.max(z0 - z, z - z1);
+    return Math.hypot(Math.max(a, 0), Math.max(b, 0)) + Math.min(Math.max(a, b), 0);
+  }
+  const SHAPED = { trunk: 1, fence: 1, sand: 1, barrel: 1, stall: 1, crate: 1, cab: 1, bed: 1, bench: 1, vend: 1, trash: 1, wreck: 1, mtower: 1, bcar: 1, bus: 1, hedge: 1, rubble: 1, statue: 1 };
+  function sdCaps(x, y, z, ax, ay, az, bx, by, bz, r) {
+    const px = x - ax, py = y - ay, pz = z - az, vx = bx - ax, vy = by - ay, vz = bz - az;
+    const h = Math.max(0, Math.min(1, (px * vx + py * vy + pz * vz) / (vx * vx + vy * vy + vz * vz)));
+    return Math.hypot(px - vx * h, py - vy * h, pz - vz * h) - r;
+  }
+  function findProp(map, type, tx, ty) { for (const p of map.props) if (p.type === type && tx >= p.x && tx < p.x + p.w && ty >= p.y && ty < p.y + p.h) return p; return null; }
+  const WRECK_A = Math.atan(1 / 3);
+  function findTruck(map, tx, ty) { for (const t of map.trucks) if (tx >= t.x && tx <= t.x + 1 && ty >= t.y && ty <= t.y + 3) return t; return null; }
+  // расстояние от точки до формы объекта в клетке (tx,ty); r — диапазон высот столбца
+  function shapeSD(map, c, tx, ty, r, x, y, z) {
+    const TL = C.TILE, cx = (tx + 0.5) * TL, cy = (ty + 0.5) * TL, m = r[2];
+    switch (m) {
+      case 'trunk': { const [R, H] = TRUNK[map.theme] || TRUNK.village; return sdCyl(x, y, z, cx, cy, R, 0, H); }
+      case 'fence': {
+        const W = map.W, isF = (xx, yy) => map.cols[yy * W + xx] && map.cols[yy * W + xx].s.some((q) => q[2] === 'fence');
+        return isF(tx - 1, ty) || isF(tx + 1, ty) ? sdBox(x, y, z, cx, cy, r[1] / 2, 24, 1.5, r[1] / 2) : sdBox(x, y, z, cx, cy, r[1] / 2, 1.5, 24, r[1] / 2);
+      }
+      case 'sand': return sdBox(x, y, z, cx, cy, 14.4, 24, 10.8, 14.4);
+      case 'barrel': return Math.min(sdCyl(x, y, z, cx - 10.8, cy - 9.6, 8.9, 0, 30), sdCyl(x, y, z, cx + 10.8, cy - 8.4, 8.9, 0, 30), sdCyl(x, y, z, cx, cy + 10.8, 8.9, 0, 30));
+      case 'crate': { let d = sdBox(x, y, z, cx, cy, 13, 23, 23, 13); if (r[1] > 30) d = Math.min(d, sdBox(x, y, z, cx, cy, 39, 20.6, 20.6, 13)); return d; }
+      case 'stall': {
+        let d = Math.min(sdBox(x, y, z, cx, cy, 28.8, 20.4, 20.4, 1), sdBox(x, y, z, cx, cy, 58.1, 25.2, 25.2, 0.8), sdCyl(x, y, z, cx, cy, 14, 29, 33));
+        for (const sx of [-19.2, 19.2]) for (const sy of [-19.2, 19.2]) d = Math.min(d, sdBox(x, y, z, cx + sx, cy + sy, 28.8, 1, 1, 28.8));
+        return d;
+      }
+      case 'cab': case 'bed': {
+        const t = findTruck(map, tx, ty); if (!t) return sdBox(x, y, z, cx, cy, (r[0] + r[1]) / 2, 24, 24, (r[1] - r[0]) / 2);
+        const tcx = (t.x + 1) * TL, z0 = t.y * TL, cz1 = z0 + TL * 0.5 + 0.15 * 24;
+        return Math.min(
+          sdBox(x, y, z, tcx, z0 + TL * 0.5, 32.4, 44.2, 22.8, 12), sdBox(x, y, z, tcx, cz1 + 0.15 * 24, 56.4, 43.2, 14.4, 13.8),
+          sdBox(x, y, z, tcx, z0 + TL * 2.5, 23.6, 47, 70.6, 2.4), sdBox(x, y, z, tcx, z0 + TL * 2, 13.2, 33.6, 90, 3.6));
+      }
+      case 'bench': return Math.min(sdBox(x, y, z, cx, cy, 34.8, 21.6, 6, 1), sdBox(x, y, z, cx, cy + 5.8, 42, 21.6, 0.8, 5.4), sdBox(x, y, z, cx - 16.8, cy, 29.3, 0.8, 5.4, 5.4), sdBox(x, y, z, cx + 16.8, cy, 29.3, 0.8, 5.4, 5.4));
+      case 'vend': return sdBox(x, y, z, cx, cy, 49.2, 15.6, 12, 25.2);
+      case 'trash': return sdCyl(x, y, z, cx, cy, 8, 24, 51);
+      case 'wreck': {
+        const left = x < 22 * TL, bx0 = left ? 19.8 * TL : (44 - 19.8) * TL, a = left ? WRECK_A : -WRECK_A, bz = (19.8 - 18.5) * TL / 3 + 36;
+        const dx = x - bx0, dz = z - bz, lx = Math.cos(a) * dx + Math.sin(a) * dz, lz = -Math.sin(a) * dx + Math.cos(a) * dz;
+        return sdBox(lx, y, lz, 0, (ty < 18 ? 18 : 18) * TL, 0, 111.4, 44.4, 34.2);
+      }
+      case 'mtower': {
+        const M = MT, mx = M.cx * TL, my = M.cy * TL, R = 4.22 * TL, Ri = 3.25 * TL, rr = Math.hypot(x - mx, y - my);
+        const zr = Math.max(r[0] - z, z - r[1]);
+        if (c.kind === 'in') return sdBox(x, y, z, cx, cy, (r[0] + r[1]) / 2, 24, 24, (r[1] - r[0]) / 2);
+        let d = Math.max(rr - R, Ri - rr, zr);
+        // контрфорс с севера: прямоугольник со скруглённым концом
+        const bw = 52.8, yN = 7 * TL + bw, yIn = my - R + 14.4;
+        d = Math.min(d, sdBox(x, y, z, mx, (yN + yIn) / 2, 330, bw, (yIn - yN) / 2, 330), sdCyl(x, y, z, mx, yN, bw, 0, 660));
+        return d;
+      }
+      case 'bcar': {
+        const p = findProp(map, 'bcar', tx, ty); if (!p) return sdBox(x, y, z, cx, cy, 20, 24, 24, 20);
+        const ccx = (p.x + p.w / 2) * TL, ccy = (p.y + p.h / 2) * TL, hx = p.horiz ? 44 : 19, hy = p.horiz ? 19 : 44;
+        return Math.min(sdBox(x, y, z, ccx, ccy, 16, hx, hy, 11), sdBox(x, y, z, ccx, ccy, 33.5, p.horiz ? 22 : 17, p.horiz ? 17 : 22, 6.5));
+      }
+      case 'bus': {
+        const p = findProp(map, 'bus', tx, ty); if (!p) return sdBox(x, y, z, cx, cy, 37, 24, 21, 31);
+        return sdBox(x, y, z, (p.x + p.w / 2) * TL, (p.y + 0.5) * TL, 37, p.w * 24 - 3, 21, 31);
+      }
+      case 'hedge': return Math.min(sdCaps(x, y, z, cx - 16, cy - 16, 2, cx + 16, cy + 16, 26, 2.2), sdCaps(x, y, z, cx + 16, cy - 16, 2, cx - 16, cy + 16, 26, 2.2), sdCaps(x, y, z, cx, cy - 18, 26, cx, cy + 18, 2, 2.2));
+      case 'rubble': return (Math.hypot((x - cx) / 26, (y - cy) / 26, z / 20) - 1) * 20;
+      case 'statue': {
+        const sx = STATUE.x * TL, sy = STATUE.y * TL;
+        return Math.min(sdBox(x, y, z, sx, sy, 20, 44, 44, 20), sdBox(x, y, z, sx, sy, 70, 26, 26, 30), sdCyl(x, y, z, sx, sy, 12, 100, 135), sdCyl(x, y, z, sx, sy, 8.5, 135, 162), sdCyl(x, y, z, sx, sy, 5, 162, 172));
+      }
+      default: return sdBox(x, y, z, cx, cy, (r[0] + r[1]) / 2, 24, 24, (r[1] - r[0]) / 2);
     }
-    if (mat === 'fence') {
-      const W = map.W, isF = (x, y) => map.cols[y * W + x] && map.cols[y * W + x].s.some((r) => r[2] === 'fence');
-      const horiz = isF(tx - 1, ty) || isF(tx + 1, ty);
-      const b = horiz ? [tx * TL, (tx + 1) * TL, cy - 2, cy + 2, 0, top] : [cx - 2, cx + 2, ty * TL, (ty + 1) * TL, 0, top];
-      return boxHit(ox, oy, oz, dx, dy, dz, b, tIn, tOut);
+  }
+  // Луч против формы в пределах [tIn, tOut]: сфер-трейсинг по SDF
+  function shapeHit(map, c, tx, ty, r, ox, oy, oz, dx, dy, dz, tIn, tOut) {
+    let t = tIn;
+    for (let i = 0; i < 80 && t <= tOut; i++) {
+      const d = shapeSD(map, c, tx, ty, r, ox + dx * t, oy + dy * t, oz + dz * t);
+      if (d < 0.08) return { t, n: shapeNormal(map, c, tx, ty, r, ox + dx * t, oy + dy * t, oz + dz * t) };
+      t += Math.max(d, 0.25);
     }
-    return boxHit(ox, oy, oz, dx, dy, dz, [tx * TL, (tx + 1) * TL, cy - 11, cy + 11, 0, top], tIn, tOut);
+    return null;
+  }
+  function shapeNormal(map, c, tx, ty, r, x, y, z) {
+    const e = 0.4, f = (a, b, q) => shapeSD(map, c, tx, ty, r, a, b, q);
+    const nx = f(x + e, y, z) - f(x - e, y, z), ny = f(x, y + e, z) - f(x, y - e, z), nz = f(x, y, z + e) - f(x, y, z - e), l = Math.hypot(nx, ny, nz) || 1;
+    return [nx / l, ny / l, nz / l];
+  }
+  // Нормаль поверхности в точке попадания (для следов от пуль на клиенте) или null для обычных стен
+  function hitNormal(map, x, y, z) {
+    const TL = C.TILE, tx0 = Math.floor(x / TL), ty0 = Math.floor(y / TL);
+    let best = null, bd = 2.5;
+    for (let ty = ty0 - 1; ty <= ty0 + 1; ty++) for (let tx = tx0 - 1; tx <= tx0 + 1; tx++) {
+      const c = colAt(map, tx, ty);
+      for (const r of (c.shot ? c.s.concat(c.shot) : c.s)) if (SHAPED[r[2]]) { const d = Math.abs(shapeSD(map, c, tx, ty, r, x, y, z)); if (d < bd) { bd = d; best = shapeNormal(map, c, tx, ty, r, x, y, z); } }
+    }
+    return best;
   }
   function ray3(map, ox, oy, oz, dx, dy, dz, max) {
     const TL = C.TILE;
@@ -472,11 +597,11 @@
       const c = map.cols[ty * map.W + tx];
       const zA = oz + dz * tIn, zB = oz + dz * tOut;
       let best = Infinity, n = null;
-      for (const r of c.s) {
+      for (const r of (c.shot ? c.s.concat(c.shot) : c.s)) {
         const z0 = r[0], z1 = r[1], mat = r[2];
         // тонкие объекты: пуля попадает в сам ствол дерева / доски / мешки, а не в «коробку» клетки
-        if (mat === 'trunk' || mat === 'fence' || mat === 'sand') {
-          const h = thinHit(map, c, mat, tx, ty, z1, ox, oy, oz, dx, dy, dz, tIn, tOut);
+        if (SHAPED[mat]) {
+          const h = shapeHit(map, c, tx, ty, r, ox, oy, oz, dx, dy, dz, tIn, tOut);
           if (h && h.t < best) { best = h.t; n = h.n; }
           continue;
         }
@@ -566,10 +691,14 @@
     o.acc = w.acc ?? (o.cat === 'shotgun' ? o.spread : o.cat === 'sniper' ? o.spread : ACC[o.cat]);
     if (w.key === 'deagle') o.acc = 0.004;
     [o.kick, o.kickH] = KICK_W[w.key] || KICK[o.cat];
+    // как в CS 1.6 (у всех каска): с одного выстрела в голову убивают только мощные стволы
+    o.hs1 = ['ak47', 'deagle', 'awp', 'scout', 'sg552', 'aug'].includes(w.key);
     return o;
   });
   const WKEY = {}; WEAPONS.forEach((w) => (WKEY[w.key] = w.id));
   // Разброс пули (радианы). o: {spd 0..1, og, cr, scoped}
+  // урон попадания: голова — ×4, но каска держит всё, кроме оружия с hs1
+  function hitDamage(w, dmg, head) { if (!head) return dmg; return w.hs1 ? Math.max(200, dmg * C.HEAD_MULT) : Math.min(92, dmg * C.HEAD_MULT * 0.75); }
   function inaccuracy(w, o) {
     if (w.cat === 'knife') return 0;
     const run = Math.max(0, Math.min(1, (o.spd - 0.2) / 0.7));
@@ -737,7 +866,7 @@
   function dirFrom(yaw, pitch) { const cp = Math.cos(pitch); return [Math.cos(yaw) * cp, Math.sin(yaw) * cp, Math.sin(pitch)]; }
   const MAPS = DEFS.map(buildMap);
 
-  const api = { C, MT, MAPS, WEAPONS, WKEY, SKINS, SKEY, FINISHES, CASES, RARITY, KNIVES, GLOVES, itemName, rollCase, finishFits, inaccuracy, floorOf, floorAt, colAt, walkable, isWall, collides, groundAt, ceilAt, move, moveDir, step, ray3, hitPlayer, rampSurf, speedOf, dirFrom };
+  const api = { C, MT, MAPS, WEAPONS, WKEY, SKINS, SKEY, FINISHES, CASES, RARITY, KNIVES, GLOVES, itemName, rollCase, finishFits, inaccuracy, hitDamage, hitNormal, floorOf, floorAt, colAt, walkable, isWall, collides, groundAt, ceilAt, move, moveDir, step, ray3, hitPlayer, rampSurf, speedOf, dirFrom };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Shared = api;
 })(this);
