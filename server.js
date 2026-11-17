@@ -127,7 +127,7 @@ class Room {
     p.x = (pick[0] + 0.5) * C.TILE + (Math.random() - 0.5) * 14; p.y = (pick[1] + 0.5) * C.TILE + (Math.random() - 0.5) * 14;
     p.z = S.groundAt(map, p.x, p.y, C.R, 40); p.vx = 0; p.vy = 0; p.vz = 0; p.og = true; p.cr = false; p.spd = 0; p.mv = 0;
     p.angle = p.team === 'A' ? 0 : Math.PI; p.pitch = 0;
-    p.hp = C.HP; p.alive = true; p.wantSpawn = false; p.reloadUntil = 0; p.switchUntil = 0; p.queue.length = 0;
+    p.hp = C.HP; p.alive = true; p.wantSpawn = false; p.reloadUntil = 0; p.inputAt = Date.now(); p.switchUntil = 0; p.queue.length = 0;
     p.scoped = false; p.spray = 0; p.hist = [];
     p.path = null; p.tgtId = null; p.spawnProtect = Date.now() + 1500; p.stuck = 0;
   }
@@ -376,8 +376,8 @@ class Room {
         if (!p.alive) { if (now >= p.respawnAt && (p.bot || p.wantSpawn || now - p.diedAt > 30000)) this.spawn(p); continue; }
         if (p.bot) this.botThink(p, now);
         else {
-          if (p.queue.length > 8) p.queue.splice(0, p.queue.length - 8);
-          const steps = p.queue.splice(0, 3);
+          if (p.queue.length > 15) p.queue.splice(0, p.queue.length - 15);
+          const steps = p.queue.splice(0, p.queue.length > 4 ? 3 : 2);
           for (const inp of steps) {
             const slot = inp.w | 0;
             if (slot >= 0 && slot <= 2) this.switchSlot(p, slot, now);
@@ -398,7 +398,9 @@ class Room {
             if (inp.r && !p.reloadUntil && w.mag && p.ammo[p.slot] < w.mag) { p.reloadUntil = now + w.reload; p.scoped = false; }
             p.lastSeq = inp.s | 0;
           }
-          if (!steps.length && !p.og) S.step(this.map, p, 0, p.angle, p.cr ? 2 : 0, 0, C.DT); // падение без ввода
+          if (steps.length) p.inputAt = now;
+          // падение без ввода — только если клиент перестал присылать ввод (свернул вкладку), иначе ломается предсказание
+          else if (!p.og && now - (p.inputAt || 0) > 400) S.step(this.map, p, 0, p.angle, p.cr ? 2 : 0, 0, C.DT);
         }
         const w = this.curW(p);
         if (p.reloadUntil && now >= p.reloadUntil) { p.ammo[p.slot] = w.mag; p.reloadUntil = 0; }
