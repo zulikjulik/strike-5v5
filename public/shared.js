@@ -419,6 +419,45 @@
   }
 
   // 3D-луч по карте: {t, n:[nx,ny,nz]} (n=null — улетело)
+  // Пересечение луча с «настоящей» формой тонкого объекта внутри клетки (в пределах [tIn, tOut])
+  const TRUNK = { village: [5, 76], city: [5, 76], autumn: [5, 76], desert: [4, 108], winter: [4.6, 48], baku: [4.3, 62] };
+  function boxHit(ox, oy, oz, dx, dy, dz, b, tIn, tOut) {
+    let t0 = tIn, t1 = tOut, n = null;
+    const o = [ox, oy, oz], d = [dx, dy, dz];
+    for (let a = 0; a < 3; a++) {
+      const lo = b[a * 2], hi = b[a * 2 + 1];
+      if (Math.abs(d[a]) < 1e-9) { if (o[a] < lo || o[a] > hi) return null; continue; }
+      let ta = (lo - o[a]) / d[a], tb = (hi - o[a]) / d[a], sgn = -1;
+      if (ta > tb) { const q = ta; ta = tb; tb = q; sgn = 1; }
+      if (ta > t0) { t0 = ta; n = [0, 0, 0]; n[a] = sgn; }
+      if (tb < t1) t1 = tb;
+      if (t0 > t1) return null;
+    }
+    return { t: t0, n: n || [0, 0, 1] };
+  }
+  function thinHit(map, c, mat, tx, ty, top, ox, oy, oz, dx, dy, dz, tIn, tOut) {
+    const TL = C.TILE, cx = (tx + 0.5) * TL, cy = (ty + 0.5) * TL;
+    if (mat === 'trunk') {
+      const [R, H] = TRUNK[map.theme] || TRUNK.village;
+      const fx = ox - cx, fy = oy - cy, a = dx * dx + dy * dy;
+      if (a < 1e-9) return null;
+      const b = 2 * (fx * dx + fy * dy), cc = fx * fx + fy * fy - R * R, disc = b * b - 4 * a * cc;
+      if (disc < 0) return null;
+      let t = (-b - Math.sqrt(disc)) / (2 * a);
+      if (cc < 0) t = tIn;
+      if (t < tIn || t > tOut) return null;
+      const z = oz + dz * t; if (z < 0 || z > H) return null;
+      const hx = ox + dx * t - cx, hy = oy + dy * t - cy, l = Math.hypot(hx, hy) || 1;
+      return { t, n: [hx / l, hy / l, 0] };
+    }
+    if (mat === 'fence') {
+      const W = map.W, isF = (x, y) => map.cols[y * W + x] && map.cols[y * W + x].s.some((r) => r[2] === 'fence');
+      const horiz = isF(tx - 1, ty) || isF(tx + 1, ty);
+      const b = horiz ? [tx * TL, (tx + 1) * TL, cy - 2, cy + 2, 0, top] : [cx - 2, cx + 2, ty * TL, (ty + 1) * TL, 0, top];
+      return boxHit(ox, oy, oz, dx, dy, dz, b, tIn, tOut);
+    }
+    return boxHit(ox, oy, oz, dx, dy, dz, [tx * TL, (tx + 1) * TL, cy - 11, cy + 11, 0, top], tIn, tOut);
+  }
   function ray3(map, ox, oy, oz, dx, dy, dz, max) {
     const TL = C.TILE;
     let tx = Math.floor(ox / TL), ty = Math.floor(oy / TL);
@@ -433,7 +472,14 @@
       const c = map.cols[ty * map.W + tx];
       const zA = oz + dz * tIn, zB = oz + dz * tOut;
       let best = Infinity, n = null;
-      for (const [z0, z1] of c.s) {
+      for (const r of c.s) {
+        const z0 = r[0], z1 = r[1], mat = r[2];
+        // тонкие объекты: пуля попадает в сам ствол дерева / доски / мешки, а не в «коробку» клетки
+        if (mat === 'trunk' || mat === 'fence' || mat === 'sand') {
+          const h = thinHit(map, c, mat, tx, ty, z1, ox, oy, oz, dx, dy, dz, tIn, tOut);
+          if (h && h.t < best) { best = h.t; n = h.n; }
+          continue;
+        }
         if (zA >= z0 && zA <= z1) { if (tIn < best) { best = tIn; n = side; } }
         else if (zA > z1 && zB < z1) { const tt = tIn + ((zA - z1) / (zA - zB)) * (tOut - tIn); if (tt < best) { best = tt; n = [0, 0, 1]; } }
         else if (zA < z0 && zB > z0) { const tt = tIn + ((z0 - zA) / (zB - zA)) * (tOut - tIn); if (tt < best) { best = tt; n = [0, 0, -1]; } }

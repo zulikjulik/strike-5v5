@@ -45,12 +45,11 @@
     master.connect(comp); comp.connect(ctx.destination);
     sfxBus = ctx.createGain(); sfxBus.gain.value = vol.sfx; sfxBus.connect(master);
     musicBus = ctx.createGain(); musicBus.gain.value = 0; musicBus.connect(master);
-    verb = ctx.createConvolver(); verb.buffer = makeIR(1.8, 3);
+    verb = ctx.createConvolver(); verb.buffer = makeIR(0.45, 5);
     verbIn = ctx.createGain(); verbIn.gain.value = 1; verbIn.connect(verb);
-    const verbOut = ctx.createGain(); verbOut.gain.value = 0.5; verb.connect(verbOut); verbOut.connect(sfxBus);
+    const verbOut = ctx.createGain(); verbOut.gain.value = 0.1; verb.connect(verbOut); verbOut.connect(sfxBus);
     // эхо (отражение от зданий): задержка с обратной связью и фильтром
-    echoIn = ctx.createGain(); const dl = ctx.createDelay(1); dl.delayTime.value = 0.21; const fb = ctx.createGain(); fb.gain.value = 0.32; const elp = ctx.createBiquadFilter(); elp.type = 'lowpass'; elp.frequency.value = 1600;
-    const eo = ctx.createGain(); eo.gain.value = 0.42; echoIn.connect(dl); dl.connect(elp); elp.connect(fb); fb.connect(dl); elp.connect(eo); eo.connect(sfxBus);
+    echoIn = ctx.createGain();
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     startMusic();
@@ -80,8 +79,7 @@
     const pn = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
     out.connect(lp);
     if (pn) { pn.pan.value = Math.max(-1, Math.min(1, pan)); lp.connect(pn); pn.connect(sfxBus); } else lp.connect(sfxBus);
-    const send = ctx.createGain(); send.gain.value = P.tail * (0.6 + (1 - k) * 0.8); lp.connect(send); send.connect(verbIn);
-    const es = ctx.createGain(); es.gain.value = w.sil ? 0.05 : P.tail * 0.9; lp.connect(es); es.connect(echoIn);
+    const send = ctx.createGain(); send.gain.value = P.tail * (0.15 + (1 - k) * 0.35); lp.connect(send); send.connect(verbIn);
     const det = 0.94 + Math.random() * 0.12;
     // 1) щелчок
     const n1 = noise(t, 0.04), hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = P.crack * det;
@@ -96,7 +94,6 @@
     o.start(t); o.stop(t + P.td + 0.05);
     // низкий «бум» вблизи и механика затвора
     if (!w.sil && k > 0.35) { const ob = ctx.createOscillator(); ob.type = 'sine'; ob.frequency.setValueAtTime(P.thump * 0.7, t); ob.frequency.exponentialRampToValueAtTime(32, t + P.td * 2.2); const gb = ctx.createGain(); env(gb, t, 0.9 * k, 0.003, P.td * 2.2); ob.connect(gb); gb.connect(out); ob.start(t); ob.stop(t + P.td * 2.4); }
-    if (distPx < 40) { click(1300 * det, 0.22, 0.012); click(2400 * det, 0.12, 0.03); }
     if (w.sil) { const n4 = noise(t, 0.12), hp4 = ctx.createBiquadFilter(); hp4.type = 'highpass'; hp4.frequency.value = 3000; const g4 = ctx.createGain(); env(g4, t, 0.35, 0.002, 0.1); n4.connect(hp4); hp4.connect(g4); g4.connect(out); click(2600, 0.25 * v, 0.03); }
     active++; setTimeout(() => active--, (P.dur + 0.1) * 1000);
   }

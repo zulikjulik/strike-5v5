@@ -449,8 +449,17 @@ const holeMat = new THREE.MeshBasicMaterial({ map: tex('hole'), transparent: tru
 const bloodMat = new THREE.MeshBasicMaterial({ map: tex('blood'), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 });
 const planeGeo = new THREE.PlaneGeometry(1, 1);
 const holes = [], bloods = []; let holeIdx = 0, bloodIdx = 0;
-for (let i = 0; i < 200; i++) { const m = new THREE.Mesh(planeGeo, holeMat); m.visible = false; scene.add(m); holes.push(m); }
-for (let i = 0; i < 60; i++) { const m = new THREE.Mesh(planeGeo, bloodMat); m.visible = false; scene.add(m); bloods.push(m); }
+for (let i = 0; i < 200; i++) { const m = new THREE.Mesh(planeGeo, holeMat.clone()); m.visible = false; scene.add(m); holes.push(m); }
+for (let i = 0; i < 60; i++) { const m = new THREE.Mesh(planeGeo, bloodMat.clone()); m.visible = false; scene.add(m); bloods.push(m); }
+// следы от пуль и кровь сами исчезают: держатся 20 с (кровь 14 с), затем плавно тают
+const DECAL_LIFE = { hole: [20000, 3000], blood: [14000, 3000] };
+function fadeDecals(now) {
+  for (const [pool, [life, fade]] of [[holes, DECAL_LIFE.hole], [bloods, DECAL_LIFE.blood]]) for (const m of pool) {
+    if (!m.visible) continue;
+    const age = now - m.userData.t;
+    if (age > life + fade) m.visible = false; else m.material.opacity = age > life ? 1 - (age - life) / fade : 1;
+  }
+}
 const shellMat = new THREE.MeshStandardMaterial({ color: 0xd9a740, metalness: 1, roughness: 0.3 }), shellGeo = new THREE.CylinderGeometry(0.0055, 0.0055, 0.032, 8); shellGeo.rotateX(Math.PI / 2);
 const shells = []; for (let i = 0; i < 50; i++) { const m = new THREE.Mesh(shellGeo, shellMat); m.visible = false; scene.add(m); shells.push({ m, v: new THREE.Vector3(), life: 0, b: 0 }); }
 const chipGeo = new THREE.BoxGeometry(0.02, 0.012, 0.016), chipMat = new THREE.MeshLambertMaterial({ color: 0x6a645c });
@@ -458,13 +467,20 @@ const chips = []; for (let i = 0; i < 70; i++) { const m = new THREE.Mesh(chipGe
 let chipIdx = 0;
 let shellIdx = 0;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
-function placeDecal(pool, idx, p, n, size) { const m = pool[idx % pool.length]; m.position.set(p.x + n.x * 0.012, p.y + n.y * 0.012, p.z + n.z * 0.012); _v.copy(m.position).add(n); m.lookAt(_v); m.rotateZ(Math.random() * 6); m.scale.setScalar(size); m.visible = true; }
+function placeDecal(pool, idx, p, n, size) { const m = pool[idx % pool.length]; m.userData.t = performance.now(); m.material.opacity = 1; m.position.set(p.x + n.x * 0.012, p.y + n.y * 0.012, p.z + n.z * 0.012); _v.copy(m.position).add(n); m.lookAt(_v); m.rotateZ(Math.random() * 6); m.scale.setScalar(size); m.visible = true; }
 function ejectShell(pos, yaw) { const s = shells[shellIdx++ % shells.length]; s.m.position.copy(pos); s.m.visible = true; s.life = 0; s.b = 0; const r = yaw + Math.PI / 2; s.v.set(Math.cos(r) * 2.0 + (Math.random() - 0.5) * 0.6, 1.8 + Math.random() * 0.8, Math.sin(r) * 2.0 + (Math.random() - 0.5) * 0.6); s.m.rotation.set(Math.random() * 6, Math.random() * 6, 0); }
 function muzzleFlash(pos, big, own, dir) {
   const f = flashPool[flashIdx++ % flashPool.length]; f.s.position.copy(pos); f.s.scale.setScalar(0.3 * big * (0.8 + Math.random() * 0.4)); f.s.material.rotation = Math.random() * 6; f.s.visible = true; f.t = performance.now();
   if (dir) { f.fl.position.copy(pos); f.fl.lookAt(_v2.copy(pos).add(dir)); f.fl.rotateZ(Math.random() * 3); f.fl.scale.set(0.5 * big, 0.5 * big, 0.55 * big * (0.8 + Math.random() * 0.5)); f.fl.visible = true; }
   const L = own ? flashLight : flashLight2; L.position.copy(pos); L.intensity = 9 * big; L.userData.t = performance.now();
   for (let i = 0; i < 3; i++) pNorm.add({ x: pos.x, y: pos.y, z: pos.z, vx: (dir ? dir.x * 0.6 : 0) + (Math.random() - 0.5) * 0.4, vy: 0.25 + Math.random() * 0.3, vz: (dir ? dir.z * 0.6 : 0) + (Math.random() - 0.5) * 0.4, max: 0.9 + Math.random() * 0.5, s: 0.1, grow: 0.7, c: COL.smoke, a: 0.16, drag: 0.94 });
+}
+// нормаль поверхности в точке попадания: у ствола дерева — от оси ствола
+function surfNormal(end, q) {
+  const map = MAPS[worldIdx], sx = end.x / U, sy = end.z / U, tx = Math.floor(sx / C.TILE), ty = Math.floor(sy / C.TILE);
+  const c = map.cols[ty * map.W + tx];
+  if (c && c.s.some((r) => r[2] === 'trunk')) { const hx = sx - (tx + 0.5) * C.TILE, hy = sy - (ty + 0.5) * C.TILE, l = Math.hypot(hx, hy) || 1; return new THREE.Vector3(hx / l, 0, hy / l); }
+  return new THREE.Vector3(q[0], q[2], q[1]);
 }
 function impactWall(p, n) {
   placeDecal(holes, holeIdx++, p, n, 0.07 + Math.random() * 0.04);
@@ -975,12 +991,13 @@ function frame() {
   for (const f of flashPool) if (f.s.visible && now - f.t > 50) { f.s.visible = false; f.fl.visible = false; }
   for (const c of chips) { if (!c.m.visible) continue; c.life += dt; c.v.y -= 9.8 * dt; c.m.position.addScaledVector(c.v, dt); c.m.rotation.x += dt * 12; if (c.m.position.y < 0.01 && c.v.y < 0) { c.m.position.y = 0.01; c.v.multiplyScalar(0.3); c.v.y *= -0.5; } if (c.life > 2.5) c.m.visible = false; }
   emitFires(dt);
+  fadeDecals(now);
   for (const L of [flashLight, flashLight2]) if (L.intensity > 0 && now - (L.userData.t || 0) > 60) L.intensity = 0;
   for (const s of shells) {
     if (!s.m.visible) continue;
     s.life += dt; s.v.y -= 9.8 * dt; s.m.position.addScaledVector(s.v, dt); s.m.rotation.x += dt * 15;
     const gz = S.groundAt(MAPS[worldIdx], s.m.position.x / U, s.m.position.z / U, 1, s.m.position.y / U + 2) * U + 0.01;
-    if (s.m.position.y < gz) { s.m.position.y = gz; if (s.b++ < 2 && s.v.y < -1) Sfx.shell(camera.position.distanceTo(s.m.position)); s.v.y *= -0.3; s.v.x *= 0.5; s.v.z *= 0.5; }
+    if (s.m.position.y < gz) { s.m.position.y = gz;  s.v.y *= -0.3; s.v.x *= 0.5; s.v.z *= 0.5; }
     if (s.life > 4) s.m.visible = false;
   }
   tracerPool.forEach((m) => (m.visible = false)); glowPool.forEach((m) => (m.visible = false));
@@ -990,7 +1007,7 @@ function frame() {
     if (trav >= t.len) {
       if (!t.done) {
         t.done = true;
-        if (t.flag === 0 && NRM[t.nn]) impactWall(t.end, new THREE.Vector3(NRM[t.nn][0], NRM[t.nn][2], NRM[t.nn][1]));
+        if (t.flag === 0 && NRM[t.nn]) impactWall(t.end, surfNormal(t.end, NRM[t.nn]));
         else if (t.flag === 1) { impactBody(t.end, t.dir, WEAPONS[t.wid].key === 'awp'); if (t.mine) { hitMark = now; hitHead = !!t.hs; Sfx.hit(); } }
       }
       return false;
